@@ -104,8 +104,8 @@ MESSAGE_TYPES = {
 
 # Queue settings - pacing for outgoing posts (safer defaults; override via env)
 # Recommended defaults: 20–30 seconds to avoid flood limits in channels
-MESSAGE_QUEUE_MIN_INTERVAL = int(os.getenv("MESSAGE_QUEUE_MIN_INTERVAL", "20"))
-MESSAGE_QUEUE_MAX_INTERVAL = int(os.getenv("MESSAGE_QUEUE_MAX_INTERVAL", "30"))
+MESSAGE_QUEUE_MIN_INTERVAL = int(os.getenv("MESSAGE_QUEUE_MIN_INTERVAL", "5"))
+MESSAGE_QUEUE_MAX_INTERVAL = int(os.getenv("MESSAGE_QUEUE_MAX_INTERVAL", "8"))
 # Backward-compat fallback (unused by new scheduler, kept for compatibility)
 MESSAGE_QUEUE_INTERVAL = 45
 

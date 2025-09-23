@@ -20,6 +20,8 @@ services:
       - AI_DISABLE_HF=0
       - AI_PROFANITY_THRESHOLD=${AI_PROFANITY_THRESHOLD:-0.7}
       - SPAM_SCORE_THRESHOLD=${SPAM_SCORE_THRESHOLD:-0.6}
+      - MESSAGE_QUEUE_MIN_INTERVAL=5
+      - MESSAGE_QUEUE_MAX_INTERVAL=8
       - TZ=${TIMEZONE:-UTC}
       # Writable caches for HF/Torch inside mounted volume
       - XDG_CACHE_HOME=/app/cache

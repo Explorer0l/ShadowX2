@@ -109,7 +109,7 @@ class MessageQueue:
                                     logging.warning("Transient error sending photo; retrying soon", exc_info=True)
                                     await asyncio.sleep(2)
                                     continue
-                            else:  # video
+                            elif media_type == 'video':
                                 try:
                                     await self.bot.send_video(
                                         chat_id=channel,
@@ -121,6 +121,34 @@ class MessageQueue:
                                     continue
                                 except (TelegramServerError, TelegramNetworkError, asyncio.TimeoutError):
                                     logging.warning("Transient error sending video; retrying soon", exc_info=True)
+                                    await asyncio.sleep(2)
+                                    continue
+                            elif media_type == 'audio':
+                                try:
+                                    await self.bot.send_audio(
+                                        chat_id=channel,
+                                        audio=file_id,
+                                        caption=final_caption or None
+                                    )
+                                except TelegramRetryAfter as e:
+                                    await asyncio.sleep(int(getattr(e, 'retry_after', 5)) + 1)
+                                    continue
+                                except (TelegramServerError, TelegramNetworkError, asyncio.TimeoutError):
+                                    logging.warning("Transient error sending audio; retrying soon", exc_info=True)
+                                    await asyncio.sleep(2)
+                                    continue
+                            elif media_type == 'voice':
+                                try:
+                                    await self.bot.send_voice(
+                                        chat_id=channel,
+                                        voice=file_id,
+                                        caption=final_caption or None
+                                    )
+                                except TelegramRetryAfter as e:
+                                    await asyncio.sleep(int(getattr(e, 'retry_after', 5)) + 1)
+                                    continue
+                                except (TelegramServerError, TelegramNetworkError, asyncio.TimeoutError):
+                                    logging.warning("Transient error sending voice; retrying soon", exc_info=True)
                                     await asyncio.sleep(2)
                                     continue
                         else:

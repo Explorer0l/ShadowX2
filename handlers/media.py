@@ -16,7 +16,7 @@ from utils.filters import contains_ad_words, contains_banned_words, filter_profa
 async def register_media_handlers(dp, bot):
     """Register media-related handlers"""
     
-    @dp.message(F.content_type.in_({'photo', 'video'}))
+    @dp.message(F.content_type.in_({'photo', 'video', 'audio', 'voice'}))
     async def handle_media_message(message: types.Message):
         user_id = message.from_user.id
         user_data = state.user_data
@@ -37,9 +37,22 @@ async def register_media_handlers(dp, bot):
 
         # Idea media path: if awaiting_idea, send only to admin and store
         if user_id in user_data and user_data[user_id].get('awaiting_idea'):
-            media_type = 'photo' if message.photo else 'video'
-            file_id = message.photo[-1].file_id if media_type == 'photo' else message.video.file_id
-            caption = message.caption or ""
+            if message.photo:
+                media_type = 'photo'
+                file_id = message.photo[-1].file_id
+                caption = message.caption or ""
+            elif message.video:
+                media_type = 'video'
+                file_id = message.video.file_id
+                caption = message.caption or ""
+            elif message.audio:
+                media_type = 'audio'
+                file_id = message.audio.file_id
+                caption = message.caption or ""
+            else:
+                media_type = 'voice'
+                file_id = message.voice.file_id
+                caption = message.caption or ""
             try:
                 from database import add_idea
                 idea_id = add_idea(user_id=user_id, content=caption, media_type=media_type, file_id=file_id)
@@ -84,9 +97,23 @@ async def register_media_handlers(dp, bot):
         
         university = user[2]
         message_type = user_data[user_id]['message_type']
-        media_type = 'photo' if message.photo else 'video'
-        file_id = message.photo[-1].file_id if media_type == 'photo' else message.video.file_id
-        caption = message.caption or ""
+        if message.photo:
+            media_type = 'photo'
+            file_id = message.photo[-1].file_id
+            caption = message.caption or ""
+        elif message.video:
+            media_type = 'video'
+            file_id = message.video.file_id
+            caption = message.caption or ""
+        elif message.audio:
+            media_type = 'audio'
+            file_id = message.audio.file_id
+            caption = message.caption or ""
+        else:
+            media_type = 'voice'
+            file_id = message.voice.file_id
+            # У voice нет caption в Telegram, но иногда клиенты присылают подпись
+            caption = message.caption or ""
         # Enforce minimal words for caption if exists
         if caption:
             try:
@@ -187,7 +214,7 @@ async def register_media_handlers(dp, bot):
                         )
                     except Exception:
                         pass
-            else:
+            elif media_type == 'video':
                 for recipient_id in recipients:
                     try:
                         # Localize buttons for each recipient
@@ -207,6 +234,52 @@ async def register_media_handlers(dp, bot):
                                 f"📝 Caption:\n{caption}\n\n"
                                 f"🧹 Filtered caption:\n{filtered_caption}"
                             ),
+                            reply_markup=get_admin_decision_keyboard(message_id, admin_language)
+                        )
+                    except Exception:
+                        pass
+            elif media_type == 'audio':
+                for recipient_id in recipients:
+                    try:
+                        try:
+                            admin_user = get_user(recipient_id)
+                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+                        except Exception:
+                            admin_language = 'ru'
+                        await bot.send_audio(
+                            recipient_id,
+                            audio=file_id,
+                            caption=(
+                                f"⚠️ Media for moderation (ID: {message_id})\n\n"
+                                f"🏫 University: {university}\n"
+                                f"📌 Type: {message_type}\n"
+                                f"🔎 Reason: {reason_admin}\n\n"
+                                f"📝 Caption:\n{caption}\n\n"
+                                f"🧹 Filtered caption:\n{filtered_caption}"
+                            ) if caption else None,
+                            reply_markup=get_admin_decision_keyboard(message_id, admin_language)
+                        )
+                    except Exception:
+                        pass
+            else:  # voice
+                for recipient_id in recipients:
+                    try:
+                        try:
+                            admin_user = get_user(recipient_id)
+                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+                        except Exception:
+                            admin_language = 'ru'
+                        await bot.send_voice(
+                            recipient_id,
+                            voice=file_id,
+                            caption=(
+                                f"⚠️ Media for moderation (ID: {message_id})\n\n"
+                                f"🏫 University: {university}\n"
+                                f"📌 Type: {message_type}\n"
+                                f"🔎 Reason: {reason_admin}\n\n"
+                                f"📝 Caption:\n{caption}\n\n"
+                                f"🧹 Filtered caption:\n{filtered_caption}"
+                            ) if caption else None,
                             reply_markup=get_admin_decision_keyboard(message_id, admin_language)
                         )
                     except Exception:
