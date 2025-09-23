@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -6,14 +6,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps for aiogram/aiohttp, optional certs
+# System deps for aiohttp SSL
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install python dependencies
-COPY requirements.txt ./
-RUN pip install --upgrade pip && pip install -r requirements.txt
+# Install Python dependencies (CPU-only, without Detoxify to avoid conflicts/size)
+RUN pip install --upgrade pip wheel setuptools
+RUN pip install aiogram==3.15.0 aiohttp==3.9.5 python-dotenv==1.0.1 langid==1.1.6
+# CPU torch only
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch==2.4.1
+RUN pip install transformers==4.43.3 huggingface-hub==0.24.6
 
 # Copy project
 COPY . .
@@ -22,7 +25,23 @@ COPY . .
 RUN mkdir -p /data
 
 # Default envs (override in compose or runtime)
-ENV DB_PATH=/data/bot_database.db
+ENV DB_PATH=/data/bot_database.db \
+    AI_PROFANITY_ENABLED=1 \
+    AI_BACKEND=hf \
+    AI_DISABLE_HF=0 \
+    AI_PROFANITY_THRESHOLD=0.7 \
+    SPAM_SCORE_THRESHOLD=0.6
+
+# Optional: prefetch HF model at build time to avoid first-run download (set --build-arg PREFETCH_MODELS=1)
+ARG PREFETCH_MODELS=0
+RUN if [ "$PREFETCH_MODELS" = "1" ]; then \
+      python - << 'PY'\
+from transformers import AutoTokenizer, AutoModelForSequenceClassification\
+m='cointegrated/rubert-tiny-toxicity'\
+AutoTokenizer.from_pretrained(m); AutoModelForSequenceClassification.from_pretrained(m)\
+print('HF model cached')\
+PY
+    ; fi
 
 # Run
 CMD ["python", "bot.py"]
