@@ -9,7 +9,7 @@ import random
 from datetime import datetime, timedelta
 from database import add_message_to_queue, get_messages_to_send, mark_message_as_sent, get_last_scheduled_time
 from config import MESSAGE_QUEUE_MIN_INTERVAL, MESSAGE_QUEUE_MAX_INTERVAL, UNIVERSITIES
-from aiogram.exceptions import TelegramRetryAfter, TelegramServerError, TelegramNetworkError
+from aiogram.exceptions import TelegramRetryAfter, TelegramServerError, TelegramNetworkError, TelegramBadRequest
 
 class MessageQueue:
     def __init__(self, bot):
@@ -154,20 +154,36 @@ class MessageQueue:
                             elif media_type == 'poll':
                                 # file_id contains options joined by '||'
                                 try:
+                                    from config import POLL_IS_ANONYMOUS, POLL_ALLOWS_MULTIPLE
                                     options = (file_id or "").split('||') if file_id else []
-                                    # Send native poll with question=send_content or fallback
-                                    question = (send_content or '').strip() or 'Poll'
+                                    # Send native poll with question=send_content or fallback, append order number
+                                    base_question = (send_content or '').strip() or 'Poll'
+                                    question = f"{base_question} \u2116{message_number}" if base_question else f"\u2116{message_number}"
                                     # Telegram requires 2-10 options
                                     safe_options = [o for o in options if o.strip()][:10]
                                     if len(safe_options) < 2:
                                         safe_options = ["Yes", "No"]
-                                    await self.bot.send_poll(
-                                        chat_id=channel,
-                                        question=question,
-                                        options=safe_options,
-                                        allows_multiple_answers=False,
-                                        is_anonymous=True
-                                    )
+                                    try:
+                                        await self.bot.send_poll(
+                                            chat_id=channel,
+                                            question=question,
+                                            options=safe_options,
+                                            allows_multiple_answers=bool(POLL_ALLOWS_MULTIPLE),
+                                            is_anonymous=bool(POLL_IS_ANONYMOUS)
+                                        )
+                                    except TelegramBadRequest as e:
+                                        # Channels запрещают неанонимные опросы: попробуем анонимно
+                                        if 'non-anonymous polls can\'t be sent to channel chats' in str(e).lower():
+                                            await asyncio.sleep(0)
+                                            await self.bot.send_poll(
+                                                chat_id=channel,
+                                                question=question,
+                                                options=safe_options,
+                                                allows_multiple_answers=bool(POLL_ALLOWS_MULTIPLE),
+                                                is_anonymous=True
+                                            )
+                                        else:
+                                            raise
                                 except TelegramRetryAfter as e:
                                     await asyncio.sleep(int(getattr(e, 'retry_after', 5)) + 1)
                                     continue

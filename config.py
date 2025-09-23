@@ -85,7 +85,7 @@ def is_admin(user_id: int) -> bool:
 
 # Universities and their channels
 UNIVERSITIES = {
-    "XIAMEN": "@xmumShadowX"
+    "XIAMEN": "@shadow_xiamen_talk"
 }
 
 # Message types and their hashtags
@@ -126,6 +126,10 @@ AI_PROFANITY_DETECTION_ONLY = False  # combine AI + rules
 # Performance optimizations
 AI_USE_ASYNC = True  # Use async AI processing to avoid blocking
 AI_CACHE_SIZE = 1000  # Cache recent AI results
+
+# Poll settings
+POLL_IS_ANONYMOUS = os.getenv("POLL_IS_ANONYMOUS", "1") in ("1", "true", "True", "yes", "on")
+POLL_ALLOWS_MULTIPLE = os.getenv("POLL_MULTIPLE", "0") in ("1", "true", "True", "yes", "on")
 
 # Spam detection config
 SPAM_ENABLED = True
