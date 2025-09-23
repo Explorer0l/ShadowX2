@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+# Multi-stage build for optimized production image
+FROM python:3.12-slim as builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -6,38 +7,79 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Minimal system deps
+# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies (CPU-only, without Detoxify to avoid conflicts/size)
-RUN pip install --upgrade pip wheel setuptools
-RUN pip install aiogram==3.15.0 aiohttp==3.9.5 python-dotenv==1.0.1 langid==1.1.6
-# CPU torch only (optional; kept for future AI features)
-RUN pip install --index-url https://download.pytorch.org/whl/cpu torch==2.4.1
+# Copy requirements first for better caching
+COPY requirements.txt .
 
-# Copy project
-COPY . .
+# Install Python dependencies with optimized versions
+RUN pip install --upgrade pip wheel setuptools && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Create data dir for SQLite if DB_PATH not set (mounted volume recommended)
-RUN mkdir -p /data
+# Production stage
+FROM python:3.12-slim as production
 
-# Default envs (override in compose or runtime)
+# Create non-root user for security
+RUN groupadd -r shadowx && useradd -r -g shadowx shadowx
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TRANSFORMERS_NO_TF=1 \
+    TRANSFORMERS_NO_FLAX=1 \
+    TRANSFORMERS_NO_TORCHVISION=1
+
+WORKDIR /app
+
+# Install only runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy installed packages from builder
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy application code
+COPY --chown=shadowx:shadowx . .
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /data /app/logs /app/cache && \
+    chown -R shadowx:shadowx /data /app/logs /app/cache
+
+# Production environment defaults
 ENV DB_PATH=/data/bot_database.db \
-    AI_PROFANITY_ENABLED=0 \
-    AI_BACKEND=local \
-    AI_DISABLE_HF=1 \
+    AI_PROFANITY_ENABLED=1 \
+    AI_BACKEND=ensemble \
+    AI_DISABLE_HF=0 \
     AI_PROFANITY_THRESHOLD=0.7 \
-    SPAM_SCORE_THRESHOLD=0.6
+    SPAM_SCORE_THRESHOLD=0.6 \
+    LOG_LEVEL=INFO \
+    PYTHONPATH=/app
 
-# Optional: prefetch HF model at build time to avoid first-run download (set --build-arg PREFETCH_MODELS=1)
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import sqlite3; sqlite3.connect('/data/bot_database.db').close()" || exit 1
+
+# Optional: prefetch AI models at build time
 ARG PREFETCH_MODELS=0
 RUN if [ "$PREFETCH_MODELS" = "1" ]; then \
-      python -c "from transformers import AutoTokenizer, AutoModelForSequenceClassification as M; m='cointegrated/rubert-tiny-toxicity'; AutoTokenizer.from_pretrained(m); M.from_pretrained(m)" && \
-      python -c "from detoxify import Detoxify; Detoxify('multilingual')" ; \
+        su shadowx -c "python -c 'import os; os.environ[\"AI_PROFANITY_ENABLED\"]=\"1\"; from utils.filters import _ensure_ai_loaded; _ensure_ai_loaded()'" ; \
     fi
 
-# Run
+# Switch to non-root user
+USER shadowx
+
+# Expose port for potential webhooks
+EXPOSE 8080
+
+# Run application
 CMD ["python", "bot.py"]
 

@@ -1,22 +1,135 @@
 version: "3.8"
+
 services:
-  bot:
-    build: .
+  shadowx-bot:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PREFETCH_MODELS: 1  # Pre-download AI models for faster startup
+    image: shadowx-bot:latest
     container_name: shadowx-bot
     restart: unless-stopped
+    
+    # Environment configuration
     env_file:
       - .env
     environment:
       - DB_PATH=/data/bot_database.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - AI_PROFANITY_ENABLED=${AI_PROFANITY_ENABLED:-1}
+      - AI_BACKEND=${AI_BACKEND:-ensemble}
+      - AI_PROFANITY_THRESHOLD=${AI_PROFANITY_THRESHOLD:-0.7}
+      - SPAM_SCORE_THRESHOLD=${SPAM_SCORE_THRESHOLD:-0.6}
+      - TZ=${TIMEZONE:-UTC}
+    
+    # Volume mounts
     volumes:
       - shadowx_data:/data
-    # Uncomment to use a proxy
+      - shadowx_logs:/app/logs
+      - shadowx_cache:/app/cache
+    
+    # Resource limits for VPS
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    
+    # Network configuration
+    networks:
+      - shadowx-network
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('/data/bot_database.db').close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
+    
+    # Uncomment for proxy support
     # environment:
     #   - https_proxy=http://user:pass@proxy:port
     #   - http_proxy=http://user:pass@proxy:port
     #   - no_proxy=localhost,127.0.0.1
 
+  # Optional: Monitoring with Watchtower for auto-updates
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: shadowx-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=3600  # Check every hour
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_REVIVE_STOPPED=true
+    networks:
+      - shadowx-network
+    profiles:
+      - monitoring
+
+  # Optional: Log aggregation
+  loki:
+    image: grafana/loki:latest
+    container_name: shadowx-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - shadowx_loki:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - shadowx-network
+    profiles:
+      - monitoring
+
 volumes:
   shadowx_data:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}
+  
+  shadowx_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${LOGS_PATH:-./logs}
+  
+  shadowx_cache:
+    driver: local
+  
+  shadowx_loki:
+    driver: local
+
+networks:
+  shadowx-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16
 

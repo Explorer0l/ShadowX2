@@ -416,9 +416,17 @@ def _ai_profanity_score_sync(text: str) -> float:
                         logits = outputs.logits.squeeze(0)
                         probs = torch.sigmoid(logits).detach().cpu().tolist()
                     id2label = getattr(_hf_model.config, "id2label", {}) or {}
-                    label_probs = {str(id2label.get(idx, idx)).lower(): float(p) for idx, p in enumerate(probs)}
+                    label_probs = {}
+                    for idx, p in enumerate(probs):
+                        # Support id2label with string keys ("0") or int keys (0)
+                        raw = id2label.get(idx, None)
+                        if raw is None:
+                            raw = id2label.get(str(idx), idx)
+                        label_name = str(raw).lower()
+                        label_probs[label_name] = float(p)
                     # Focus on explicit profanity/insults only; ignore generic 'toxic' to avoid overblocking
-                    preferred_labels = ("obscene", "insult", "swear", "profan")
+                    # Include 'obscenity' to match RU model label names
+                    preferred_labels = ("obscene", "obscenity", "insult", "swear", "profan")
                     var_best = 0.0
                     for label, p in label_probs.items():
                         if any(label_key in label for label_key in preferred_labels):
@@ -717,3 +725,28 @@ def _cleanup_detoxify_cache():
                 pass
     except Exception:
         pass
+
+# Алиасы для совместимости с тестами
+def detect_ads(text: str) -> tuple[bool, float]:
+    """Detect if text contains ads. Returns (is_ad, confidence_score)"""
+    if not text:
+        return False, 0.0
+    
+    is_ad = contains_ad_words(text)
+    # Простая оценка уверенности на основе количества индикаторов
+    score = 0.0
+    if is_ad:
+        text_lower = text.lower()
+        # Подсчитываем различные индикаторы рекламы
+        url_matches = sum(1 for rx in _AD_REGEXES if rx.search(text_lower))
+        domain_matches = sum(1 for rx in _DOMAIN_REGEXES if rx.search(text))
+        word_matches = sum(1 for word in AD_RELATED_WORDS if word in text_lower)
+        
+        total_indicators = url_matches + domain_matches + word_matches
+        score = min(1.0, total_indicators * 0.3)
+    
+    return is_ad, score
+
+def calculate_spam_score(text: str) -> float:
+    """Calculate spam score for text. Alias for spam_score function."""
+    return spam_score(text)
