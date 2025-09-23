@@ -151,6 +151,30 @@ class MessageQueue:
                                     logging.warning("Transient error sending voice; retrying soon", exc_info=True)
                                     await asyncio.sleep(2)
                                     continue
+                            elif media_type == 'poll':
+                                # file_id contains options joined by '||'
+                                try:
+                                    options = (file_id or "").split('||') if file_id else []
+                                    # Send native poll with question=send_content or fallback
+                                    question = (send_content or '').strip() or 'Poll'
+                                    # Telegram requires 2-10 options
+                                    safe_options = [o for o in options if o.strip()][:10]
+                                    if len(safe_options) < 2:
+                                        safe_options = ["Yes", "No"]
+                                    await self.bot.send_poll(
+                                        chat_id=channel,
+                                        question=question,
+                                        options=safe_options,
+                                        allows_multiple_answers=False,
+                                        is_anonymous=True
+                                    )
+                                except TelegramRetryAfter as e:
+                                    await asyncio.sleep(int(getattr(e, 'retry_after', 5)) + 1)
+                                    continue
+                                except (TelegramServerError, TelegramNetworkError, asyncio.TimeoutError):
+                                    logging.warning("Transient error sending poll; retrying soon", exc_info=True)
+                                    await asyncio.sleep(2)
+                                    continue
                         else:
                             # For text posts
                             final_message = f"{hashtag}\n{send_content}\n№{message_number}\n{hashtag}" if hashtag else f"{send_content}\n№{message_number}"

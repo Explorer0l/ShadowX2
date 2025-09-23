@@ -308,3 +308,155 @@ async def register_media_handlers(dp, bot):
     
     # Ensure state module is accessible
     state.moderation_queue = state.moderation_queue
+
+    @dp.message(F.poll)
+    async def handle_poll_message(message: types.Message):
+        user_id = message.from_user.id
+        user_data = state.user_data
+        user = get_user(user_id)
+
+        # Ensure default university
+        if (not user) or (not user[2]) or (user[2] not in UNIVERSITIES):
+            language = user[3] if user and user[3] else 'en'
+            try:
+                from database import add_user
+                add_user(user_id, message.from_user.username, 'XIAMEN', language)
+            except Exception:
+                pass
+            user = get_user(user_id)
+
+        language = user[3] if user and user[3] else 'en'
+
+        if user_id not in user_data or 'message_type' not in user_data[user_id]:
+            await message.answer(
+                get_text("message_type_first", language),
+                reply_markup=get_user_keyboard(user_id, language)
+            )
+            return
+
+        university = user[2]
+        message_type = user_data[user_id]['message_type']
+        poll = message.poll
+        question = poll.question or ""
+        options = [opt.text for opt in (poll.options or [])]
+        joined_text = (question + "\n" + "\n".join(options)).strip()
+
+        # Minimal words check on question
+        if question:
+            try:
+                words = [w for w in question.split() if w.strip()]
+                if len(words) < MIN_MESSAGE_WORDS:
+                    await message.answer(
+                        get_text('prompts.min_words', language),
+                        reply_markup=get_back_keyboard(language)
+                    )
+                    return
+            except Exception:
+                pass
+
+        # Analyze for ads/profanity/spam
+        has_ads = contains_ad_words(joined_text) if joined_text else False
+        has_profanity = contains_banned_words(joined_text) if joined_text else False
+        has_spam = contains_spam(joined_text) if joined_text else False
+        filtered_question = filter_profanity(question) if has_profanity else question
+
+        if has_ads and has_profanity and has_spam:
+            reason_db = 'Ads + Profanity + Spam'
+            reason_admin = 'Ad+Profanity+Spam'
+        elif has_ads and has_profanity:
+            reason_db = 'Ads + Profanity'
+            reason_admin = 'Ad+Profanity'
+        elif has_ads and has_spam:
+            s = spam_score(joined_text)
+            reason_db = f'Ads + Spam (score={s:.2f})'
+            reason_admin = f'Ad+Spam ({s:.2f})'
+        elif has_profanity and has_spam:
+            s = spam_score(joined_text)
+            reason_db = f'Profanity + Spam (score={s:.2f})'
+            reason_admin = f'Profanity+Spam ({s:.2f})'
+        elif has_ads:
+            reason_db = 'Poll requires review (possible ad)'
+            reason_admin = 'Possible ad'
+        elif has_spam:
+            s = spam_score(joined_text)
+            reason_db = f'Poll requires review (spam score={s:.2f})'
+            reason_admin = f'Possible spam ({s:.2f})'
+        elif has_profanity:
+            reason_db = 'Poll requires review (profanity)'
+            reason_admin = 'Profanity detected'
+        else:
+            reason_db = 'Poll requires review'
+            reason_admin = 'Poll review'
+
+        # Persist: store question as content, options as file_id (joined), media_type='poll'
+        options_blob = "||".join(options)
+        message_id = add_message_to_db(
+            user_id=user_id,
+            university=university,
+            message_type=message_type,
+            content=question,
+            filtered_content=filtered_question,
+            media_type='poll',
+            file_id=options_blob,
+            status='pending',
+            reason=reason_db
+        )
+
+        if message_id:
+            # Add to moderation queue
+            state.moderation_queue[message_id] = {
+                'user_id': user_id,
+                'media_type': 'poll',
+                'file_id': options_blob,
+                'caption': question,
+                'university': university,
+                'message_type': message_type,
+                'language': language
+            }
+
+            # Notify moderators/admins with poll summary
+            from database import get_moderators
+            recipients = set(get_moderators() or [])
+            recipients.update(ADMIN_IDS)
+            summary = (
+                f"⚠️ Poll for moderation (ID: {message_id})\n\n"
+                f"🏫 University: {university}\n"
+                f"📌 Type: {message_type}\n"
+                f"🔎 Reason: {reason_admin}\n\n"
+                f"❓ Question:\n{question}\n\n"
+                f"🗳 Options:\n" + "\n".join(f"- {o}" for o in options)
+            )
+            for recipient_id in recipients:
+                try:
+                    try:
+                        admin_user = get_user(recipient_id)
+                        admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+                    except Exception:
+                        admin_language = 'ru'
+                    await bot.send_message(
+                        recipient_id,
+                        summary,
+                        reply_markup=get_admin_decision_keyboard(message_id, admin_language)
+                    )
+                except Exception:
+                    pass
+
+            # Ack to user
+            try:
+                from database import is_moderator as _is_moderator
+                is_mod = _is_moderator(user_id)
+            except Exception:
+                is_mod = False
+            await message.answer(
+                get_text("media_moderation", language),
+                reply_markup=get_user_keyboard(user_id, language, is_admin=is_admin(user_id), is_moderator=is_mod)
+            )
+            try:
+                user_data[user_id].pop('message_type', None)
+            except Exception:
+                pass
+        else:
+            await message.answer(
+                f"{get_text('error', language)} {get_text('when_processing_media', language)}",
+                reply_markup=get_user_keyboard(user_id, language)
+            )
