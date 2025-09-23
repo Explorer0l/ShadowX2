@@ -6,22 +6,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps for aiohttp SSL and building tokenizers (Rust)
+# Minimal system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    build-essential \
-    rustc \
-    cargo \
-    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies (CPU-only, without Detoxify to avoid conflicts/size)
 RUN pip install --upgrade pip wheel setuptools
 RUN pip install aiogram==3.15.0 aiohttp==3.9.5 python-dotenv==1.0.1 langid==1.1.6
-# CPU torch only
+# CPU torch only (optional; kept for future AI features)
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch==2.4.1
-# Detoxify requires transformers==4.22.1
-RUN pip install transformers==4.22.1 huggingface-hub==0.24.6 detoxify==0.5.1
 
 # Copy project
 COPY . .
@@ -31,9 +25,9 @@ RUN mkdir -p /data
 
 # Default envs (override in compose or runtime)
 ENV DB_PATH=/data/bot_database.db \
-    AI_PROFANITY_ENABLED=1 \
-    AI_BACKEND=ensemble \
-    AI_DISABLE_HF=0 \
+    AI_PROFANITY_ENABLED=0 \
+    AI_BACKEND=local \
+    AI_DISABLE_HF=1 \
     AI_PROFANITY_THRESHOLD=0.7 \
     SPAM_SCORE_THRESHOLD=0.6
 
