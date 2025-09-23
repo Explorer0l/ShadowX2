@@ -32,7 +32,7 @@ except Exception:
 
 # Optimize transformers environment
 for key, val in [("TRANSFORMERS_NO_TF", "1"), ("TRANSFORMERS_NO_FLAX", "1"), 
-                 ("TRANSFORMERS_NO_TORCHVISION", "1"), ("AI_DISABLE_HF", "1")]:
+                 ("TRANSFORMERS_NO_TORCHVISION", "1")]:
     os.environ.setdefault(key, val)
 
 # Lists of banned words
@@ -414,11 +414,11 @@ def _ai_profanity_score_sync(text: str) -> float:
         try:
             import torch
             best = 0.0
-            # Restrict HF scoring to Slavic/Cyrillic languages to reduce false positives
+            # Prefer Slavic/Cyrillic languages but don't hard-block scoring
             allowed_langs = {"ru", "uk", "be", "kk", "tg", "tj", "uz", "tt"}
-            lang_ok = (lang is None) or (lang in allowed_langs)
-            if lang_ok:
-                for variant in _normalized_variants_for_ai(text):
+            variants = _normalized_variants_for_ai(text) if (lang is None or lang in allowed_langs) else [text]
+            if variants:
+                for variant in variants:
                     tokens = _hf_tokenizer(variant, return_tensors="pt", truncation=True, max_length=256)
                     # Move to same device as model
                     try:
@@ -438,14 +438,22 @@ def _ai_profanity_score_sync(text: str) -> float:
                             raw = id2label.get(str(idx), idx)
                         label_name = str(raw).lower()
                         label_probs[label_name] = float(p)
-                    # Focus on explicit profanity/insults only; ignore generic 'toxic' to avoid overblocking
+                    # Focus on explicit profanity/insults, but provide robust fallbacks
                     # Include 'obscenity' to match RU model label names
                     preferred_labels = ("obscene", "obscenity", "insult", "swear", "profan")
                     var_best = 0.0
                     for label, p in label_probs.items():
                         if any(label_key in label for label_key in preferred_labels):
                             var_best = max(var_best, p)
-                    # Do NOT fall back to max of all labels if none matched
+                    if var_best == 0.0:
+                        # Conservative fallback: consider 'toxic/oxicity' first if present
+                        fallback_keys = ("toxic", "toxicity")
+                        for label, p in label_probs.items():
+                            if any(k in label for k in fallback_keys):
+                                var_best = max(var_best, p)
+                    if var_best == 0.0 and label_probs:
+                        # Ultimate fallback: take the max probability among all labels
+                        var_best = max(label_probs.values())
                     best = max(best, var_best)
             scores.append(best)
         except Exception:
@@ -471,7 +479,11 @@ def _ai_profanity_score_sync(text: str) -> float:
     return max(scores)
 
 def ai_profanity_score(text: str) -> float:
-    """Synchronous wrapper for backward compatibility."""
+    """Synchronous wrapper that ensures models are loaded before scoring."""
+    try:
+        _ensure_ai_loaded()
+    except Exception:
+        pass
     return _ai_profanity_score_sync(text)
 
 def ai_contains_profanity(text: str) -> bool:

@@ -22,7 +22,7 @@ Install dependencies:
 ```
 pip install -r requirements.txt
 ```
-.\.venv312\Scripts\Activate.ps1
+.\venv\Scripts\Activate.ps1
 $Env:AI_DISABLE_HF='0'; $Env:AI_BACKEND='ensemble'; python bot.py
 
 $Env:AI_PROFANITY_ENABLED='1'
