@@ -5,15 +5,29 @@ Contains text filtering functions for profanity and ad detection
 
 import re, os, asyncio, logging
 from typing import Iterable, List
-from config import (
-    AI_PROFANITY_ENABLED, AI_PROFANITY_MODEL, AI_PROFANITY_BACKEND,
-    AI_LANG_ROUTING, AI_PROFANITY_THRESHOLD, AI_PROFANITY_DETECTION_ONLY
-)
+
+# Import AI-related settings from config, but be resilient during build-time prefetch
+# when BOT_TOKEN may be intentionally absent. Fallback to env/defaults in that case.
+try:
+    from config import (
+        AI_PROFANITY_ENABLED, AI_PROFANITY_MODEL, AI_PROFANITY_BACKEND,
+        AI_LANG_ROUTING, AI_PROFANITY_THRESHOLD, AI_PROFANITY_DETECTION_ONLY
+    )
+except Exception:
+    AI_PROFANITY_ENABLED = os.getenv("AI_PROFANITY_ENABLED", "0") in ("1", "true", "True", "yes", "on")
+    AI_PROFANITY_MODEL = os.getenv("AI_PROFANITY_MODEL", "cointegrated/rubert-tiny-toxicity")
+    AI_PROFANITY_BACKEND = os.getenv("AI_BACKEND", "ensemble")
+    AI_LANG_ROUTING = True
+    try:
+        AI_PROFANITY_THRESHOLD = float(os.getenv("AI_PROFANITY_THRESHOLD", "0.7"))
+    except Exception:
+        AI_PROFANITY_THRESHOLD = 0.7
+    AI_PROFANITY_DETECTION_ONLY = False
 
 # Safe defaults for optional config
 try:
     from config import SPAM_ENABLED, SPAM_SCORE_THRESHOLD
-except ImportError:
+except Exception:
     SPAM_ENABLED, SPAM_SCORE_THRESHOLD = True, 0.6
 
 # Optimize transformers environment
