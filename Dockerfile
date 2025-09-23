@@ -6,9 +6,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps for aiohttp SSL
+# System deps for aiohttp SSL and building tokenizers (Rust)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    build-essential \
+    rustc \
+    cargo \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies (CPU-only, without Detoxify to avoid conflicts/size)
