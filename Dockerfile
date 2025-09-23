@@ -16,7 +16,8 @@ RUN pip install --upgrade pip wheel setuptools
 RUN pip install aiogram==3.15.0 aiohttp==3.9.5 python-dotenv==1.0.1 langid==1.1.6
 # CPU torch only
 RUN pip install --index-url https://download.pytorch.org/whl/cpu torch==2.4.1
-RUN pip install transformers==4.43.3 huggingface-hub==0.24.6
+# Detoxify requires transformers==4.22.1
+RUN pip install transformers==4.22.1 huggingface-hub==0.24.6 detoxify==0.5.1
 
 # Copy project
 COPY . .
@@ -27,7 +28,7 @@ RUN mkdir -p /data
 # Default envs (override in compose or runtime)
 ENV DB_PATH=/data/bot_database.db \
     AI_PROFANITY_ENABLED=1 \
-    AI_BACKEND=hf \
+    AI_BACKEND=ensemble \
     AI_DISABLE_HF=0 \
     AI_PROFANITY_THRESHOLD=0.7 \
     SPAM_SCORE_THRESHOLD=0.6
@@ -37,9 +38,11 @@ ARG PREFETCH_MODELS=0
 RUN if [ "$PREFETCH_MODELS" = "1" ]; then \
       python - << 'PY'\
 from transformers import AutoTokenizer, AutoModelForSequenceClassification\
+from detoxify import Detoxify\
 m='cointegrated/rubert-tiny-toxicity'\
 AutoTokenizer.from_pretrained(m); AutoModelForSequenceClassification.from_pretrained(m)\
-print('HF model cached')\
+Detoxify('multilingual')\
+print('HF and Detoxify models cached')\
 PY
     ; fi
 
