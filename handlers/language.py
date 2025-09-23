@@ -39,8 +39,7 @@ TEXTS = {
                         "ℹ️ Сообщения проверяются автоматически:\n"
                         "- Фото/видео ➡️ всегда требуют одобрения\n"
                         "- Маты ➡️ отправляются администратору на проверку\n"
-                        "- Реклама ➡️ требуется одобрение\n"
-                        "- Остальное ➡️ публикуется сразу",
+                        "- Остальные сообщения ➡️ проходят проверку",
         "change_university_request": "📩 Ваш запрос отправлен администратору. "
                                    "Свяжитесь с администратором {} и ожидайте решения в течение 24 часов.",
         "university_first": "❌ Сначала выбери университет",
@@ -138,8 +137,7 @@ TEXTS = {
                         "ℹ️ Messages are checked automatically:\n"
                         "- Photos/videos ➡️ always require approval\n"
                         "- Profanity ➡️ sent to admin for review\n"
-                        "- Advertising ➡️ requires approval\n"
-                        "- Everything else ➡️ published immediately",
+                        "- Other messages ➡️ go through review",
         "change_university_request": "📩 Your request has been sent to the administrator. "
                                    "Contact the administrator {} and wait for a decision within 24 hours.",
         "university_first": "❌ First select a university",
