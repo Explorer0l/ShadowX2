@@ -1,0 +1,15 @@
+aiogram==3.15.0
+aiohttp==3.9.5
+python-dotenv==1.0.1
+
+# Optional AI moderation extras (install only if AI needed)
+# To enable AI, set env AI_PROFANITY_ENABLED=1 and install the extras below.
+# transformers==4.43.3
+# huggingface-hub==0.24.6
+# Detoxify==0.5.1
+# langid==1.1.6
+# torch (required by Detoxify) — choose CPU or CUDA build:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+# Windows: avoid non-stdlib 'regex' (we use Python re)

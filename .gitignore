@@ -1,0 +1,46 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.env
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+bot_database.db
+*.mp4
+*.zip
+*.7z
+*.rar
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Env variants
+.env.*
+.envrc
+.python-version
+
+# SQLite artifacts
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Test/coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type checkers/linters
+.mypy_cache/
+.ruff_cache/
+.pylint.d/
+
+# OS noise
+.DS_Store
+Thumbs.db

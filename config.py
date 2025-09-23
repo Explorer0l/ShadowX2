@@ -1,0 +1,140 @@
+"""
+Configuration file for ShadowX Bot
+Contains tokens, IDs, and other configuration settings
+"""
+
+import os
+import re
+from dotenv import load_dotenv
+
+# Load environment variables from a .env file if present
+load_dotenv()
+
+# Bot token (required)
+_raw_token = os.environ.get("BOT_TOKEN", "")
+TOKEN = _raw_token.strip().strip('"').strip("'")
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN is not set. Create .env with BOT_TOKEN=... or set environment variable.")
+# Basic format validation to catch quotes/whitespace issues early
+if not re.match(r"^\d+:[A-Za-z0-9_-]{20,}$", TOKEN):
+    raise RuntimeError("BOT_TOKEN format looks invalid. Remove quotes/spaces in .env: BOT_TOKEN=12345:ABC... (no quotes)")
+
+# Admin configuration (IDs/usernames from env)
+def _parse_int_list(value: str) -> list[int]:
+    if not value:
+        return []
+    parts = [p.strip() for p in value.replace(';', ',').replace('\n', ',').replace('\t', ',').split(',')]
+    result = []
+    for p in parts:
+        if not p:
+            continue
+        try:
+            result.append(int(p))
+        except ValueError:
+            # Allow space-separated lists too
+            for token in p.split():
+                try:
+                    result.append(int(token.strip()))
+                except Exception:
+                    continue
+    # de-duplicate preserving order
+    seen = set()
+    ordered = []
+    for x in result:
+        if x not in seen:
+            seen.add(x)
+            ordered.append(x)
+    return ordered
+
+def _parse_usernames_map(value: str) -> dict[int, str]:
+    mapping: dict[int, str] = {}
+    if not value:
+        return mapping
+    # Format: "633:id_username,569:other" or "6336309736:@name,5694951691:@name2"
+    # Also accept newlines/semicolons
+    items = [x.strip() for x in value.replace('\n', ',').replace(';', ',').split(',') if x.strip()]
+    for item in items:
+        if ':' in item:
+            key, val = item.split(':', 1)
+        elif '=' in item:
+            key, val = item.split('=', 1)
+        else:
+            continue
+        try:
+            uid = int(key.strip())
+        except Exception:
+            continue
+        mapping[uid] = val.strip()
+    return mapping
+
+# Backwards compatible primary admin (optional)
+ADMIN_ID = int(os.getenv('ADMIN_ID', '0')) or None
+ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', '') or None
+
+# Multiple admins support via env list
+_ENV_ADMIN_IDS = os.getenv('ADMIN_IDS', '')
+ADMIN_IDS = _parse_int_list(_ENV_ADMIN_IDS) or ([ADMIN_ID] if ADMIN_ID else [])
+
+# Admin usernames for display (optional map)
+ADMIN_USERNAMES = _parse_usernames_map(os.getenv('ADMIN_USERNAMES', ''))
+
+# Helper function to check if user is admin
+def is_admin(user_id: int) -> bool:
+    """Check if user is an admin"""
+    return user_id in ADMIN_IDS
+
+# Universities and their channels
+UNIVERSITIES = {
+    "XIAMEN": "@shadow_xiamen_talk"
+}
+
+# Message types and their hashtags
+MESSAGE_TYPES = {
+    "ru": {
+        "🆘Поддержка🆘": "❗️❗️❗️#НужнаПомощь❗️❗️❗️",
+        "💞Признание💞": "💞#ВниманиеПризнание💞",
+        "📩Обычное сообщение📩": ""
+    },
+    "en": {
+        "🆘Support🆘": "❗️❗️❗️#NeedHelp❗️❗️❗️",
+        "💞Confession💞": "💞#AttentionConfession💞",
+        "📩Regular message📩": ""
+    }
+}
+
+# Queue settings - pacing for outgoing posts (safer defaults; override via env)
+# Recommended defaults: 20–30 seconds to avoid flood limits in channels
+MESSAGE_QUEUE_MIN_INTERVAL = int(os.getenv("MESSAGE_QUEUE_MIN_INTERVAL", "20"))
+MESSAGE_QUEUE_MAX_INTERVAL = int(os.getenv("MESSAGE_QUEUE_MAX_INTERVAL", "30"))
+# Backward-compat fallback (unused by new scheduler, kept for compatibility)
+MESSAGE_QUEUE_INTERVAL = 45
+
+# Performance settings
+MAX_CONCURRENT_MESSAGES = 10  # Process multiple messages concurrently
+DB_CONNECTION_POOL_SIZE = 20  # SQLite connection pool
+AI_BATCH_SIZE = 5  # Batch AI requests for efficiency
+
+# AI profanity detection (optional). Heavy deps are disabled by default.
+# Enable by setting env AI_PROFANITY_ENABLED=1 when AI extras are installed.
+AI_PROFANITY_ENABLED = os.getenv("AI_PROFANITY_ENABLED", "0") in ("1", "true", "True", "yes", "on")
+AI_PROFANITY_MODEL = "cointegrated/rubert-tiny-toxicity"  # HF model for RU
+# Switch to ensemble for best accuracy if dependencies available; falls back gracefully
+AI_PROFANITY_BACKEND = os.getenv("AI_BACKEND", "ensemble")
+AI_LANG_ROUTING = True  # try to detect language and route models
+AI_PROFANITY_THRESHOLD = float(os.getenv("AI_PROFANITY_THRESHOLD", "0.7"))  # optimized threshold
+AI_PROFANITY_DETECTION_ONLY = False  # combine AI + rules
+# Performance optimizations
+AI_USE_ASYNC = True  # Use async AI processing to avoid blocking
+AI_CACHE_SIZE = 1000  # Cache recent AI results
+
+# Spam detection config
+SPAM_ENABLED = True
+SPAM_SCORE_THRESHOLD = float(os.getenv("SPAM_SCORE_THRESHOLD", "0.6"))
+
+# Minimal words requirement for user messages/captions
+MIN_MESSAGE_WORDS = int(os.getenv("MIN_MESSAGE_WORDS", "4"))
+
+# Database settings
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Allow overriding DB path via env for containerized/hosted deployments
+DATABASE_NAME = os.path.abspath(os.getenv('DB_PATH') or os.path.join(BASE_DIR, 'bot_database.db'))

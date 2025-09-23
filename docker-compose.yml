@@ -1,0 +1,22 @@
+version: "3.8"
+services:
+  bot:
+    build: .
+    container_name: shadowx-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DB_PATH=/data/bot_database.db
+    volumes:
+      - shadowx_data:/data
+    # Uncomment to use a proxy
+    # environment:
+    #   - https_proxy=http://user:pass@proxy:port
+    #   - http_proxy=http://user:pass@proxy:port
+    #   - no_proxy=localhost,127.0.0.1
+
+volumes:
+  shadowx_data:
+    driver: local
+
