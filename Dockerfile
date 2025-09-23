@@ -36,15 +36,9 @@ ENV DB_PATH=/data/bot_database.db \
 # Optional: prefetch HF model at build time to avoid first-run download (set --build-arg PREFETCH_MODELS=1)
 ARG PREFETCH_MODELS=0
 RUN if [ "$PREFETCH_MODELS" = "1" ]; then \
-      python - << 'PY'\
-from transformers import AutoTokenizer, AutoModelForSequenceClassification\
-from detoxify import Detoxify\
-m='cointegrated/rubert-tiny-toxicity'\
-AutoTokenizer.from_pretrained(m); AutoModelForSequenceClassification.from_pretrained(m)\
-Detoxify('multilingual')\
-print('HF and Detoxify models cached')\
-PY
-    ; fi
+      python -c "from transformers import AutoTokenizer, AutoModelForSequenceClassification as M; m='cointegrated/rubert-tiny-toxicity'; AutoTokenizer.from_pretrained(m); M.from_pretrained(m)" && \
+      python -c "from detoxify import Detoxify; Detoxify('multilingual')" ; \
+    fi
 
 # Run
 CMD ["python", "bot.py"]
