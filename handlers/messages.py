@@ -6,7 +6,7 @@ Handles text messages and commands
 from aiogram import types, F
 import logging
 from aiogram.filters import Command
-from database import get_user, add_user, add_message_to_db
+from database import get_user, add_user, add_message_to_db, is_banned
 from handlers.language import get_text, get_user_keyboard, get_back_keyboard, get_after_message_keyboard
 from utils.filters import contains_banned_words, contains_ad_words, filter_profanity, contains_spam, spam_score
 from config import ADMIN_ID, ADMIN_IDS, is_admin, UNIVERSITIES, MIN_MESSAGE_WORDS
@@ -149,6 +149,8 @@ async def register_message_handlers(dp, bot):
     @dp.message(F.text)
     async def handle_text_message(message: types.Message):
         user_id = message.from_user.id
+        if is_banned(user_id):
+            return
         user = get_user(user_id)
         user_data = state.user_data
         

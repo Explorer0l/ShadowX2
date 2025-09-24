@@ -4,7 +4,7 @@ Handles photo and video messages
 """
 
 from aiogram import types, F
-from database import get_user, add_message_to_db
+from database import get_user, add_message_to_db, is_banned
 from handlers.language import get_text, get_user_keyboard, get_after_message_keyboard, get_back_keyboard
 from handlers.moderation import get_admin_decision_keyboard
 from config import ADMIN_ID, ADMIN_IDS, ADMIN_USERNAME, is_admin, UNIVERSITIES, MIN_MESSAGE_WORDS
@@ -19,6 +19,8 @@ async def register_media_handlers(dp, bot):
     @dp.message(F.content_type.in_({'photo', 'video', 'audio', 'voice'}))
     async def handle_media_message(message: types.Message):
         user_id = message.from_user.id
+        if is_banned(user_id):
+            return
         user_data = state.user_data
         
         user = get_user(user_id)
@@ -312,6 +314,8 @@ async def register_media_handlers(dp, bot):
     @dp.message(F.poll)
     async def handle_poll_message(message: types.Message):
         user_id = message.from_user.id
+        if is_banned(user_id):
+            return
         user_data = state.user_data
         user = get_user(user_id)
 

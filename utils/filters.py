@@ -628,6 +628,27 @@ def spam_score(text: str) -> float:
     
     letters_only = len(re.sub(r"[^A-Za-zА-Яа-яЁё0-9]", "", t))
     score += 0.6 if letters_only < 6 and counts['url'] else 0
+
+    # NEW: gibberish / random numbers heavy
+    # - very high digit ratio
+    digits = sum(ch.isdigit() for ch in t)
+    alnum = sum(ch.isalnum() for ch in t) or 1
+    digit_ratio = digits / alnum
+    if digit_ratio > 0.6 and len(t) > 15:
+        score += 0.4
+
+    # - long runs of alternating space/word length = 1-2 (e.g., "1 2 3 4 235 325")
+    short_tokens = re.findall(r"\b[\w\d]{1,2}\b", t)
+    if len(short_tokens) >= 6:
+        score += min(0.5, 0.05 * len(short_tokens))
+
+    # - low vowel ratio heuristic (latin/cyrillic)
+    vowels = re.findall(r"[aeiouyаеёиоуыэюяAEIOUYАЕЁИОУЫЭЮЯ]", t)
+    letters = re.findall(r"[A-Za-zА-Яа-яЁё]", t)
+    if letters:
+        vowel_ratio = len(vowels) / max(1, len(letters))
+        if vowel_ratio < 0.22 and len(letters) >= 12:
+            score += 0.3
     
     return max(0.0, min(1.0, score))
 

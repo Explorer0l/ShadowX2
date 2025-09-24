@@ -112,6 +112,15 @@ def init_db():
                 university TEXT PRIMARY KEY,
                 counter INTEGER DEFAULT 1
             )''')
+
+            # Banned users table
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS banned_users (
+                user_id INTEGER PRIMARY KEY,
+                reason TEXT,
+                until TIMESTAMP NULL,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )''')
             
             # Message queue table
             cursor.execute('''
@@ -413,6 +422,39 @@ def get_moderators_with_names():
     except sqlite3.Error as e:
         logging.error(f"Error getting moderators with names: {e}")
         return []
+
+# Banlist operations
+def ban_user(user_id: int, reason: str | None = None, until: str | None = None) -> bool:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('INSERT OR REPLACE INTO banned_users (user_id, reason, until) VALUES (?, ?, ?)', (user_id, reason, until))
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        logging.error(f"Error banning user {user_id}: {e}")
+        return False
+
+def unban_user(user_id: int) -> bool:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM banned_users WHERE user_id = ?', (user_id,))
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        logging.error(f"Error unbanning user {user_id}: {e}")
+        return False
+
+def is_banned(user_id: int) -> bool:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT 1 FROM banned_users WHERE user_id = ? LIMIT 1', (user_id,))
+            return cursor.fetchone() is not None
+    except sqlite3.Error as e:
+        logging.error(f"Error checking ban for {user_id}: {e}")
+        return False
 
 def is_moderator(user_id: int) -> bool:
     """Check if user is in moderators table"""
