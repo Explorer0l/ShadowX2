@@ -151,6 +151,26 @@ class MessageQueue:
                                     logging.warning("Transient error sending voice; retrying soon", exc_info=True)
                                     await asyncio.sleep(2)
                                     continue
+                            elif media_type == 'video_note':
+                                try:
+                                    # Video notes cannot have captions
+                                    await self.bot.send_video_note(
+                                        chat_id=channel,
+                                        video_note=file_id
+                                    )
+                                    # Send a separate message with caption/number and hashtags if needed
+                                    if final_caption:
+                                        await self.bot.send_message(
+                                            chat_id=channel,
+                                            text=final_caption
+                                        )
+                                except TelegramRetryAfter as e:
+                                    await asyncio.sleep(int(getattr(e, 'retry_after', 5)) + 1)
+                                    continue
+                                except (TelegramServerError, TelegramNetworkError, asyncio.TimeoutError):
+                                    logging.warning("Transient error sending video note; retrying soon", exc_info=True)
+                                    await asyncio.sleep(2)
+                                    continue
                             elif media_type == 'poll':
                                 # file_id contains options joined by '||'
                                 try:

@@ -67,6 +67,12 @@ def _parse_usernames_map(value: str) -> dict[int, str]:
         mapping[uid] = val.strip()
     return mapping
 
+def _parse_str_list(value: str) -> list[str]:
+    if not value:
+        return []
+    parts = [p.strip().lower() for p in value.replace(';', ',').replace('\n', ',').split(',')]
+    return [p for p in parts if p]
+
 # Backwards compatible primary admin (optional)
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0')) or None
 ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', '') or None
@@ -134,6 +140,8 @@ POLL_ALLOWS_MULTIPLE = os.getenv("POLL_MULTIPLE", "0") in ("1", "true", "True", 
 # Spam detection config
 SPAM_ENABLED = True
 SPAM_SCORE_THRESHOLD = float(os.getenv("SPAM_SCORE_THRESHOLD", "0.6"))
+SPAM_DOMAIN_WHITELIST = _parse_str_list(os.getenv("SPAM_DOMAIN_WHITELIST", ""))
+SPAM_HANDLE_WHITELIST = _parse_str_list(os.getenv("SPAM_HANDLE_WHITELIST", ""))
 
 # Minimal words requirement for user messages/captions
 MIN_MESSAGE_WORDS = int(os.getenv("MIN_MESSAGE_WORDS", "4"))

@@ -64,6 +64,7 @@ TEXTS = {
         "admin_commands": {
             "admin_panel": "🛠Панель админа",
             "check_queue": "👁Проверить очередь",
+            "ideas_history": "💡История идей",
             "add_moderator": "➕Добавить модератора",
             "remove_moderator": "➖Убрать модератора",
             "list_moderators": "👥Список модераторов",
@@ -95,6 +96,14 @@ TEXTS = {
             "mod_renamed": "Имя модератора обновлено: {id} — {name}",
             "cannot_remove_admin": "Нельзя удалить владельца-админа.",
             "queue_empty": "ℹ️ Очередь модерации пуста"
+        },
+        "ideas": {
+            "title": "💡 История идей",
+            "empty": "Пока нет идей",
+            "page": "Страница {page}/{pages} (всего: {total})",
+            "open": "🔍 Открыть",
+            "prev": "⬅️ Назад",
+            "next": "Вперед ➡️"
         },
         "moderator_actions": {
             "message_approved": "✅ Модератор {moderator} одобрил сообщение #{message_id} от пользователя {user_id}:\n\n📝 {content}",
@@ -162,6 +171,7 @@ TEXTS = {
         "admin_commands": {
             "admin_panel": "🛠Admin panel",
             "check_queue": "👁Check queue",
+            "ideas_history": "💡Ideas history",
             "add_moderator": "➕Add moderator",
             "remove_moderator": "➖Remove moderator",
             "list_moderators": "👥Moderators list",
@@ -193,6 +203,14 @@ TEXTS = {
             "mod_renamed": "Moderator name updated: {id} — {name}",
             "cannot_remove_admin": "You cannot remove the owner admin.",
             "queue_empty": "ℹ️ Moderation queue is empty"
+        },
+        "ideas": {
+            "title": "💡 Ideas History",
+            "empty": "No ideas yet",
+            "page": "Page {page}/{pages} (total: {total})",
+            "open": "🔍 Open",
+            "prev": "⬅️ Prev",
+            "next": "Next ➡️"
         },
         "moderator_actions": {
             "message_approved": "✅ Moderator {moderator} approved message #{message_id} from user {user_id}:\n\n📝 {content}",
@@ -262,10 +280,11 @@ def get_user_keyboard(user_id, language='ru', is_admin=False, is_moderator=False
 
 def get_admin_panel_keyboard(language='ru'):
     """Get admin panel keyboard (localized)."""
-    admin_commands = TEXTS.get(language, TEXTS["ru"])["admin_commands"]
+    admin_commands = TEXTS.get(language, TEXTS["ru"])['admin_commands']
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=admin_commands["check_queue"])],
+            [KeyboardButton(text=admin_commands["ideas_history"])],
             [KeyboardButton(text=admin_commands["add_moderator"])],
             [KeyboardButton(text=admin_commands["remove_moderator"])],
             [KeyboardButton(text=admin_commands["rename_moderator"])],
@@ -309,7 +328,7 @@ def get_back_keyboard(language='ru'):
 
 def get_after_message_keyboard(user_id, language='ru', is_admin=False, is_moderator=False):
     """Get keyboard shown after message submission - returns to main menu"""
-    return get_user_keyboard(user_id, language, is_admin=is_admin, is_moderator=is_moderator)
+    return get_user_keyboard(user_id, language, is_admin=is_admin(user_id), is_moderator=is_moderator)
 
 # Language handlers
 async def handle_language_selection(message, bot, user_data):

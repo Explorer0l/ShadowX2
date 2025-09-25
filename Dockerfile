@@ -24,7 +24,8 @@ RUN pip install --upgrade pip wheel setuptools && \
 FROM python:3.12-slim as production
 
 # Create non-root user for security
-RUN groupadd -r shadowx && useradd -r -g shadowx shadowx
+RUN groupadd -r shadowx && useradd -r -g shadowx shadowx && \
+    mkdir -p /home/shadowx && chown -R shadowx:shadowx /home/shadowx
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -32,7 +33,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     TRANSFORMERS_NO_TF=1 \
     TRANSFORMERS_NO_FLAX=1 \
-    TRANSFORMERS_NO_TORCHVISION=1
+    TRANSFORMERS_NO_TORCHVISION=1 \
+    HOME=/home/shadowx \
+    XDG_CACHE_HOME=/app/cache \
+    HF_HOME=/app/cache/hf \
+    TORCH_HOME=/app/cache/torch \
+    HF_HUB_DISABLE_SYMLINKS_WARNING=1
 
 WORKDIR /app
 
@@ -51,7 +57,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --chown=shadowx:shadowx . .
 
 # Create necessary directories with proper permissions
-RUN mkdir -p /data /app/logs /app/cache && \
+RUN mkdir -p /data /app/logs /app/cache /app/cache/hf /app/cache/torch && \
     chown -R shadowx:shadowx /data /app/logs /app/cache
 
 # Production environment defaults
@@ -71,14 +77,14 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # Optional: prefetch AI models at build time
 ARG PREFETCH_MODELS=0
 RUN if [ "$PREFETCH_MODELS" = "1" ]; then \
-        su shadowx -c "python -c 'import os; os.environ[\"AI_PROFANITY_ENABLED\"]=\"1\"; from utils.filters import _ensure_ai_loaded; _ensure_ai_loaded()'" ; \
+        su shadowx -c "XDG_CACHE_HOME=/app/cache HF_HOME=/app/cache/hf TORCH_HOME=/app/cache/torch python -c 'import os; os.environ[\"AI_PROFANITY_ENABLED\"]=\"1\"; from utils.filters import _ensure_ai_loaded; _ensure_ai_loaded(); print(\"Prefetch done\")'" ; \
     fi
 
 # Switch to non-root user
 USER shadowx
 
 # Expose port for potential webhooks
-EXPOSE 8080
+# No ports exposed (long polling)
 
 # Run application
 CMD ["python", "bot.py"]

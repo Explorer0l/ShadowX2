@@ -26,9 +26,11 @@ except Exception:
 
 # Safe defaults for optional config
 try:
-    from config import SPAM_ENABLED, SPAM_SCORE_THRESHOLD
+    from config import SPAM_ENABLED, SPAM_SCORE_THRESHOLD, SPAM_DOMAIN_WHITELIST, SPAM_HANDLE_WHITELIST
 except Exception:
     SPAM_ENABLED, SPAM_SCORE_THRESHOLD = True, 0.6
+    SPAM_DOMAIN_WHITELIST = []
+    SPAM_HANDLE_WHITELIST = []
 
 # Optimize transformers environment
 for key, val in [("TRANSFORMERS_NO_TF", "1"), ("TRANSFORMERS_NO_FLAX", "1"), 
@@ -586,13 +588,37 @@ async def contains_banned_words_async(text):
     return False
 
 def contains_ad_words(text):
-    """Check if text contains advertising-related words"""
+    """Check if text contains advertising-related words (respects whitelist)."""
     if not text: return False
     text_lower = text.lower()
-    return (any(rx.search(text_lower) for rx in _AD_REGEXES) or
-            any(rx.search(text) for rx in _DOMAIN_REGEXES) or
-            any(word in text_lower for word in AD_RELATED_WORDS))
+    # If only whitelisted domains/handles are present and no other ad signals, return False
+    w_domains, w_handles = _is_whitelisted_domain_or_handle(text_lower)
+    has_ad_regex = any(rx.search(text_lower) for rx in _AD_REGEXES)
+    has_domain = any(rx.search(text) for rx in _DOMAIN_REGEXES)
+    has_words = any(word in text_lower for word in AD_RELATED_WORDS)
+    if (has_domain or has_ad_regex) and not has_words:
+        # If all links/handles belong to whitelist, ignore
+        if w_domains or w_handles:
+            # Check if removing whitelisted tokens eliminates ad signals
+            clean = text_lower
+            for d in SPAM_DOMAIN_WHITELIST:
+                clean = clean.replace(d, "")
+            for h in SPAM_HANDLE_WHITELIST:
+                clean = clean.replace('@' + h.lstrip('@'), "")
+            if not any(rx.search(clean) for rx in _AD_REGEXES) and not any(rx.search(clean) for rx in _DOMAIN_REGEXES):
+                return False
+    return has_ad_regex or has_domain or has_words
 
+
+def _is_whitelisted_domain_or_handle(text: str) -> tuple[int, int]:
+    """Return counts of whitelisted domains and handles present in text."""
+    if not text:
+        return 0, 0
+    lower = text.lower()
+    # Simple substring match is acceptable because we also use regexes for scoring
+    domain_hits = sum(1 for d in SPAM_DOMAIN_WHITELIST if d and d in lower)
+    handle_hits = sum(1 for h in SPAM_HANDLE_WHITELIST if h and (('@' + h.lstrip('@')) in lower))
+    return domain_hits, handle_hits
 
 def spam_score(text: str) -> float:
     """Return spam score (0..1) using lightweight heuristics."""
@@ -602,8 +628,18 @@ def spam_score(text: str) -> float:
     
     # Count various spam indicators
     counts = {k: len(v.findall(t)) for k, v in _REGEXES.items() if k in ['url', 'handle', 'phone']}
+    # Apply whitelist reductions
+    w_domains, w_handles = _is_whitelisted_domain_or_handle(t)
+    if w_domains:
+        # Reduce domain/url impact proportionally to whitelisted hits
+        counts['url'] = max(0, counts.get('url', 0) - w_domains)
+        # Also reduce domain regex hits later via ad_hits by adjusting ad_hits below
+    if w_handles:
+        counts['handle'] = max(0, counts.get('handle', 0) - w_handles)
     domain_hits = sum(len(rx.findall(t)) for rx in _DOMAIN_REGEXES)
     ad_hits = sum(1 for rx in _AD_REGEXES if rx.search(t))
+    if w_domains:
+        ad_hits = max(0, ad_hits - w_domains)
     
     # Calculate scores
     score += min(0.5, 0.25 * counts['url']) + min(0.4, 0.2 * domain_hits)

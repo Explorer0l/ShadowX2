@@ -182,9 +182,22 @@ async def register_message_handlers(dp, bot):
             # Notify all admins
             for admin_id in ADMIN_IDS:
                 try:
+                    # Prefer live username from the message; fallback to stored DB username; else ID
+                    display_name = None
+                    if getattr(message.from_user, 'username', None):
+                        display_name = f"@{message.from_user.username}"
+                    else:
+                        try:
+                            u2 = get_user(user_id)
+                            if u2 and u2[1]:
+                                display_name = f"@{u2[1]}"
+                        except Exception:
+                            display_name = None
+                    if not display_name:
+                        display_name = f"ID:{user_id}"
                     await bot.send_message(
                         admin_id,
-                        f"💡 New idea (ID: {idea_id}) from {user_id}:\n\n{message.text}"
+                        f"💡 New idea (ID: {idea_id}) from {display_name}:\n\n{message.text}"
                     )
                 except Exception:
                     logging.warning("Failed to notify admin about idea", exc_info=True)

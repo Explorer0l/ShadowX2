@@ -19,6 +19,7 @@ from config import ADMIN_ID, ADMIN_IDS, is_admin, UNIVERSITIES
 import state
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from database import get_user, get_moderator_name
+from database import get_ideas_count, get_ideas_page, get_idea_by_id
 
 # Notification functions
 async def notify_admins_about_moderator_action(bot, moderator_id, action_type, user_id, content, caption=None, message_id=None):
@@ -135,11 +136,36 @@ async def register_moderation_handlers(dp, bot):
                         caption=f"ID: {message_id}\nUniversity: {university}\nType: {message_type}\nStatus: {status}",
                         reply_markup=get_admin_decision_keyboard(message_id, admin_language)
                     )
-                else:
+                elif media_type == "video":
                     await bot.send_video(
                         message.chat.id,
                         video=file_id,
                         caption=f"ID: {message_id}\nUniversity: {university}\nType: {message_type}\nStatus: {status}",
+                        reply_markup=get_admin_decision_keyboard(message_id, admin_language)
+                    )
+                elif media_type == "audio":
+                    await bot.send_audio(
+                        message.chat.id,
+                        audio=file_id,
+                        caption=f"ID: {message_id}\nUniversity: {university}\nType: {message_type}\nStatus: {status}",
+                        reply_markup=get_admin_decision_keyboard(message_id, admin_language)
+                    )
+                elif media_type == "voice":
+                    await bot.send_voice(
+                        message.chat.id,
+                        voice=file_id,
+                        caption=f"ID: {message_id}\nUniversity: {university}\nType: {message_type}\nStatus: {status}",
+                        reply_markup=get_admin_decision_keyboard(message_id, admin_language)
+                    )
+                elif media_type == "video_note":
+                    # Video notes don't support captions; send separate message with buttons
+                    await bot.send_video_note(
+                        message.chat.id,
+                        video_note=file_id
+                    )
+                    await bot.send_message(
+                        message.chat.id,
+                        f"ID: {message_id}\nUniversity: {university}\nType: {message_type}\nStatus: {status}",
                         reply_markup=get_admin_decision_keyboard(message_id, admin_language)
                     )
             else:  # Text message
@@ -165,6 +191,11 @@ async def register_moderation_handlers(dp, bot):
         """Process admin decision for message moderation"""
         action, message_id = callback_query.data.split('_')
         message_id = int(message_id)
+        # Answer early to avoid "query is too old" errors if processing takes time
+        try:
+            await callback_query.answer()
+        except Exception:
+            pass
         
         # Get moderation queue from shared state
         moderation_queue = state.moderation_queue
@@ -332,7 +363,11 @@ async def register_moderation_handlers(dp, bot):
         # Remove from moderation queue
         moderation_queue.pop(message_id, None)
         
-        await callback_query.answer()
+        # Already answered early; ignore errors if trying again
+        try:
+            await callback_query.answer()
+        except Exception:
+            pass
     
     # Panels
     @dp.message(lambda message: message.text in [
@@ -349,6 +384,153 @@ async def register_moderation_handlers(dp, bot):
         except Exception:
             lang = 'ru'
         await message.answer(get_text('menu.admin_title', lang), reply_markup=get_admin_panel_keyboard(lang))
+
+    # ---- Ideas history (admin only) ----
+    def _ideas_nav_keyboard(language: str, page: int, pages: int, base_cb: str = "ideas"):
+        prev_btn = InlineKeyboardButton(text=get_text("ideas.prev", language), callback_data=f"{base_cb}_prev_{page}")
+        next_btn = InlineKeyboardButton(text=get_text("ideas.next", language), callback_data=f"{base_cb}_next_{page}")
+        return InlineKeyboardMarkup(inline_keyboard=[[prev_btn, next_btn]])
+
+    def _ideas_open_keyboard(language: str, idea_id: int):
+        return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text("ideas.open", language), callback_data=f"idea_open_{idea_id}")]])
+
+    async def _send_ideas_page(chat_id: int, language: str, page: int = 1, page_size: int = 5, edit_message: types.Message | None = None):
+        total = max(0, get_ideas_count())
+        pages = max(1, (total + page_size - 1) // page_size)
+        page = max(1, min(page, pages))
+        offset = (page - 1) * page_size
+        ideas = get_ideas_page(offset, page_size)
+        header = get_text("ideas.title", language)
+        page_info = get_text("ideas.page", language).format(page=page, pages=pages, total=total)
+        if not ideas:
+            text = f"{header}\n\n{get_text('ideas.empty', language)}\n{page_info}"
+            if edit_message:
+                try:
+                    await edit_message.edit_text(text)
+                except Exception:
+                    await bot.send_message(chat_id, text)
+            else:
+                await bot.send_message(chat_id, text)
+            return
+        # Build a nicely formatted list
+        lines = [header, ""]
+        for idea_id, user_id, content, media_type, file_id, ts in ideas:
+            # Prefer stored DB username if available
+            try:
+                uinfo = get_user(user_id)
+                uname = (uinfo[1] if uinfo and uinfo[1] else None)
+            except Exception:
+                uname = None
+            user_label = f"@{uname}" if uname else f"ID:{user_id}"
+            icon = "🖼" if media_type in ("photo", "video", "audio", "voice", "video_note", "poll") else "📝"
+            preview = (content or "").strip()
+            if preview and len(preview) > 120:
+                preview = preview[:117] + "…"
+            item_line = f"{icon} #{idea_id} • {ts} • {user_label}\n{preview or '-'}"
+            lines.append(item_line)
+            lines.append("")
+        text = "\n".join(lines) + f"\n{page_info}"
+        kb = _ideas_nav_keyboard(language, page, pages, base_cb="ideas")
+        if edit_message:
+            try:
+                await edit_message.edit_text(text, reply_markup=kb)
+            except Exception:
+                await bot.send_message(chat_id, text, reply_markup=kb)
+        else:
+            await bot.send_message(chat_id, text, reply_markup=kb)
+
+    @dp.message(lambda message: message.text in [
+        get_text("admin_commands.ideas_history", "ru"),
+        get_text("admin_commands.ideas_history", "en"),
+    ])
+    async def cmd_ideas_history(message: types.Message):
+        if not is_admin(message.from_user.id):
+            return
+        try:
+            from database import get_user as _get_user
+            u = _get_user(message.from_user.id)
+            lang = u[3] if u and u[3] else 'ru'
+        except Exception:
+            lang = 'ru'
+        await _send_ideas_page(message.chat.id, lang, page=1)
+
+    @dp.callback_query(lambda c: c.data.startswith(('ideas_prev_', 'ideas_next_')))
+    async def ideas_pagination(callback_query: types.CallbackQuery):
+        user_id = callback_query.from_user.id
+        if not is_admin(user_id):
+            return
+        # Determine language
+        try:
+            u = get_user(user_id)
+            lang = u[3] if u and u[3] else 'ru'
+        except Exception:
+            lang = 'ru'
+        # Parse action
+        try:
+            action, _, page_str = callback_query.data.partition('_prev_' if '_prev_' in callback_query.data else '_next_')
+            current_page = int(page_str)
+        except Exception:
+            current_page = 1
+        await callback_query.answer()
+        total = max(0, get_ideas_count())
+        pages = max(1, (total + 5 - 1) // 5)
+        if 'prev' in callback_query.data:
+            target = max(1, current_page - 1)
+        else:
+            target = min(pages, current_page + 1)
+        await _send_ideas_page(callback_query.message.chat.id, lang, page=target, edit_message=callback_query.message)
+
+    @dp.callback_query(lambda c: c.data.startswith('idea_open_'))
+    async def idea_open(callback_query: types.CallbackQuery):
+        user_id = callback_query.from_user.id
+        if not is_admin(user_id):
+            return
+        try:
+            idea_id = int(callback_query.data.split('_')[-1])
+        except Exception:
+            await callback_query.answer()
+            return
+        await callback_query.answer()
+        idea = get_idea_by_id(idea_id)
+        # Determine language
+        try:
+            u = get_user(user_id)
+            lang = u[3] if u and u[3] else 'ru'
+        except Exception:
+            lang = 'ru'
+        if not idea:
+            await bot.send_message(callback_query.message.chat.id, get_text('ideas.empty', lang))
+            return
+        _, uid, content, media_type, file_id, ts = idea
+        try:
+            uinfo = get_user(uid)
+            uname = (uinfo[1] if uinfo and uinfo[1] else None)
+        except Exception:
+            uname = None
+        user_label = f"@{uname}" if uname else f"ID:{uid}"
+        header = f"#{idea_id} • {ts} • {user_label}"
+        if media_type in ("photo", "video", "audio", "voice", "video_note"):
+            caption = (content or '').strip() or header
+            try:
+                if media_type == 'photo':
+                    await bot.send_photo(callback_query.message.chat.id, photo=file_id, caption=caption)
+                elif media_type == 'video':
+                    await bot.send_video(callback_query.message.chat.id, video=file_id, caption=caption)
+                elif media_type == 'audio':
+                    await bot.send_audio(callback_query.message.chat.id, audio=file_id, caption=caption)
+                elif media_type == 'voice':
+                    await bot.send_voice(callback_query.message.chat.id, voice=file_id, caption=caption)
+                elif media_type == 'video_note':
+                    await bot.send_video_note(callback_query.message.chat.id, video_note=file_id)
+                    if content:
+                        await bot.send_message(callback_query.message.chat.id, header + "\n" + content)
+                return
+            except Exception:
+                pass
+        # Fallback to text view
+        body = (content or '').strip()
+        text = f"{header}\n\n{body or '-'}"
+        await bot.send_message(callback_query.message.chat.id, text)
 
     @dp.message(lambda message: message.text in [
         get_text("moderator_commands.moderator_panel", "ru"),

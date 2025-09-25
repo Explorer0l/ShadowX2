@@ -16,7 +16,7 @@ from utils.filters import contains_ad_words, contains_banned_words, filter_profa
 async def register_media_handlers(dp, bot):
     """Register media-related handlers"""
     
-    @dp.message(F.content_type.in_({'photo', 'video', 'audio', 'voice'}))
+    @dp.message(F.content_type.in_({'photo', 'video', 'audio', 'voice', 'video_note'}))
     async def handle_media_message(message: types.Message):
         user_id = message.from_user.id
         if is_banned(user_id):
@@ -47,6 +47,10 @@ async def register_media_handlers(dp, bot):
                 media_type = 'video'
                 file_id = message.video.file_id
                 caption = message.caption or ""
+            elif getattr(message, 'video_note', None):
+                media_type = 'video_note'
+                file_id = message.video_note.file_id
+                caption = message.caption or ""
             elif message.audio:
                 media_type = 'audio'
                 file_id = message.audio.file_id
@@ -63,17 +67,57 @@ async def register_media_handlers(dp, bot):
             # Notify all admins
             for admin_id in ADMIN_IDS:
                 try:
+                    # Prefer live username from the message; fallback to stored DB username; else ID
+                    display_name = None
+                    if getattr(message.from_user, 'username', None):
+                        display_name = f"@{message.from_user.username}"
+                    else:
+                        try:
+                            u2 = get_user(user_id)
+                            if u2 and u2[1]:
+                                display_name = f"@{u2[1]}"
+                        except Exception:
+                            display_name = None
+                    if not display_name:
+                        display_name = f"ID:{user_id}"
                     if media_type == 'photo':
                         await bot.send_photo(
                             admin_id,
                             photo=file_id,
-                            caption=f"💡 New idea (ID: {idea_id}) from {user_id}:\n\n{caption}" if caption else f"💡 New idea (ID: {idea_id}) from {user_id}"
+                            caption=f"💡 New idea (ID: {idea_id}) from {display_name}:\n\n{caption}" if caption else f"💡 New idea (ID: {idea_id}) from {display_name}"
                         )
-                    else:
+                    elif media_type == 'video':
                         await bot.send_video(
                             admin_id,
                             video=file_id,
-                            caption=f"💡 New idea (ID: {idea_id}) from {user_id}:\n\n{caption}" if caption else f"💡 New idea (ID: {idea_id}) from {user_id}"
+                            caption=f"💡 New idea (ID: {idea_id}) from {display_name}:\n\n{caption}" if caption else f"💡 New idea (ID: {idea_id}) from {display_name}"
+                        )
+                    elif media_type == 'video_note':
+                        await bot.send_video_note(
+                            admin_id,
+                            video_note=file_id
+                        )
+                        if caption:
+                            await bot.send_message(
+                                admin_id,
+                                f"💡 New idea (ID: {idea_id}) from {display_name}:\n\n{caption}"
+                            )
+                        else:
+                            await bot.send_message(
+                                admin_id,
+                                f"💡 New idea (ID: {idea_id}) from {display_name}"
+                            )
+                    elif media_type == 'audio':
+                        await bot.send_audio(
+                            admin_id,
+                            audio=file_id,
+                            caption=f"💡 New idea (ID: {idea_id}) from {display_name}:\n\n{caption}" if caption else f"💡 New idea (ID: {idea_id}) from {display_name}"
+                        )
+                    else:
+                        await bot.send_voice(
+                            admin_id,
+                            voice=file_id,
+                            caption=f"💡 New idea (ID: {idea_id}) from {display_name}:\n\n{caption}" if caption else f"💡 New idea (ID: {idea_id}) from {display_name}"
                         )
                 except Exception:
                     pass
@@ -106,6 +150,10 @@ async def register_media_handlers(dp, bot):
         elif message.video:
             media_type = 'video'
             file_id = message.video.file_id
+            caption = message.caption or ""
+        elif getattr(message, 'video_note', None):
+            media_type = 'video_note'
+            file_id = message.video_note.file_id
             caption = message.caption or ""
         elif message.audio:
             media_type = 'audio'
@@ -259,6 +307,32 @@ async def register_media_handlers(dp, bot):
                                 f"📝 Caption:\n{caption}\n\n"
                                 f"🧹 Filtered caption:\n{filtered_caption}"
                             ) if caption else None,
+                            reply_markup=get_admin_decision_keyboard(message_id, admin_language)
+                        )
+                    except Exception:
+                        pass
+            elif media_type == 'video_note':
+                for recipient_id in recipients:
+                    try:
+                        try:
+                            admin_user = get_user(recipient_id)
+                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+                        except Exception:
+                            admin_language = 'ru'
+                        await bot.send_video_note(
+                            recipient_id,
+                            video_note=file_id
+                        )
+                        await bot.send_message(
+                            recipient_id,
+                            (
+                                f"⚠️ Media for moderation (ID: {message_id})\n\n"
+                                f"🏫 University: {university}\n"
+                                f"📌 Type: {message_type}\n"
+                                f"🔎 Reason: {reason_admin}\n\n"
+                                f"📝 Caption:\n{caption}\n\n"
+                                f"🧹 Filtered caption:\n{filtered_caption}"
+                            ),
                             reply_markup=get_admin_decision_keyboard(message_id, admin_language)
                         )
                     except Exception:

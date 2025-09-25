@@ -450,10 +450,29 @@ def is_banned(user_id: int) -> bool:
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            # Expire timed bans: delete rows where until < now
+            try:
+                cursor.execute('DELETE FROM banned_users WHERE until IS NOT NULL AND until < CURRENT_TIMESTAMP')
+            except sqlite3.Error:
+                pass
             cursor.execute('SELECT 1 FROM banned_users WHERE user_id = ? LIMIT 1', (user_id,))
             return cursor.fetchone() is not None
     except sqlite3.Error as e:
         logging.error(f"Error checking ban for {user_id}: {e}")
+        return False
+
+def ban_user_for(user_id: int, seconds: int, reason: str | None = None) -> bool:
+    """Ban user for N seconds from now (stores absolute until timestamp)."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            # Compute until as CURRENT_TIMESTAMP + seconds
+            cursor.execute('INSERT OR REPLACE INTO banned_users (user_id, reason, until) VALUES (?, ?, datetime(CURRENT_TIMESTAMP, ?))',
+                           (user_id, reason, f'+{int(seconds)} seconds'))
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        logging.error(f"Error banning user for duration {user_id}: {e}")
         return False
 
 def is_moderator(user_id: int) -> bool:
@@ -587,4 +606,51 @@ def add_idea(user_id: int, content: str | None = None, media_type: str | None = 
             return idea_id
     except sqlite3.Error as e:
         logging.error(f"Error adding idea: {e}")
+        return None
+
+# ---- Ideas history (admin) ----
+def get_ideas_count() -> int:
+    """Return total number of ideas stored."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM ideas')
+            row = cursor.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+    except sqlite3.Error as e:
+        logging.error(f"Error counting ideas: {e}")
+        return 0
+
+def get_ideas_page(offset: int, limit: int) -> list[tuple]:
+    """Return a page of ideas ordered by newest first.
+    Columns: idea_id, user_id, content, media_type, file_id, timestamp
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                SELECT idea_id, user_id, content, media_type, file_id, timestamp
+                FROM ideas
+                ORDER BY idea_id DESC
+                LIMIT ? OFFSET ?
+                ''', (int(limit), int(offset))
+            )
+            return cursor.fetchall()
+    except sqlite3.Error as e:
+        logging.error(f"Error fetching ideas page: {e}")
+        return []
+
+def get_idea_by_id(idea_id: int):
+    """Return a single idea row or None."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT idea_id, user_id, content, media_type, file_id, timestamp FROM ideas WHERE idea_id = ?',
+                (idea_id,)
+            )
+            return cursor.fetchone()
+    except sqlite3.Error as e:
+        logging.error(f"Error fetching idea {idea_id}: {e}")
         return None
