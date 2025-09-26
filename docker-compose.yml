@@ -25,7 +25,7 @@ services:
       - POLL_IS_ANONYMOUS=${POLL_IS_ANONYMOUS:-0}
       - POLL_MULTIPLE=${POLL_MULTIPLE:-0}
       - TZ=${TIMEZONE:-UTC}
-      # Writable caches for HF/Torch inside mounted volume
+      # Writable caches for HF/Torch inside mounted volume (align with Dockerfile)
       - XDG_CACHE_HOME=/app/cache
       - HF_HOME=/app/cache/hf
       - TORCH_HOME=/app/cache/torch
