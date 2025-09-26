@@ -9,7 +9,7 @@ from aiogram.filters import Command
 from database import get_user, add_user, add_message_to_db, is_banned
 from handlers.language import get_text, get_user_keyboard, get_back_keyboard, get_after_message_keyboard
 from utils.filters import contains_banned_words, contains_ad_words, filter_profanity, contains_spam, spam_score
-from config import ADMIN_ID, ADMIN_IDS, is_admin, UNIVERSITIES, MIN_MESSAGE_WORDS
+from config import ADMIN_ID, ADMIN_IDS, is_admin, UNIVERSITIES
 from utils.queue import MessageQueue
 import state
 
@@ -222,17 +222,7 @@ async def register_message_handlers(dp, bot):
         university = user[2]
         message_type = user_data[user_id]['message_type']
         language = user[3] if user and user[3] else 'en'
-        # Enforce minimal words
-        try:
-            words = [w for w in (text or '').split() if w.strip()]
-            if len(words) < MIN_MESSAGE_WORDS:
-                await message.answer(
-                    get_text('prompts.min_words', language),
-                    reply_markup=get_back_keyboard(language)
-                )
-                return
-        except Exception:
-            pass
+        # Removed minimal words enforcement
         
         # Check for ads/profanity/spam; these go to admin
         has_ads = contains_ad_words(text)

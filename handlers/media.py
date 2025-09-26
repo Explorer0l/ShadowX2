@@ -7,7 +7,7 @@ from aiogram import types, F
 from database import get_user, add_message_to_db, is_banned
 from handlers.language import get_text, get_user_keyboard, get_after_message_keyboard, get_back_keyboard
 from handlers.moderation import get_admin_decision_keyboard
-from config import ADMIN_ID, ADMIN_IDS, ADMIN_USERNAME, is_admin, UNIVERSITIES, MIN_MESSAGE_WORDS
+from config import ADMIN_ID, ADMIN_IDS, ADMIN_USERNAME, is_admin, UNIVERSITIES
 import state
 from utils.filters import contains_ad_words, contains_banned_words, filter_profanity, contains_spam, spam_score
 
@@ -164,18 +164,7 @@ async def register_media_handlers(dp, bot):
             file_id = message.voice.file_id
             # У voice нет caption в Telegram, но иногда клиенты присылают подпись
             caption = message.caption or ""
-        # Enforce minimal words for caption if exists
-        if caption:
-            try:
-                words = [w for w in caption.split() if w.strip()]
-                if len(words) < MIN_MESSAGE_WORDS:
-                    await message.answer(
-                        get_text('prompts.min_words', language),
-                        reply_markup=get_back_keyboard(language)
-                    )
-                    return
-            except Exception:
-                pass
+        # Removed minimal words enforcement for captions
         # Analyze caption for ads/profanity/spam
         has_ads = contains_ad_words(caption) if caption else False
         has_profanity = contains_banned_words(caption) if caption else False
@@ -419,18 +408,7 @@ async def register_media_handlers(dp, bot):
         options = [opt.text for opt in (poll.options or [])]
         joined_text = (question + "\n" + "\n".join(options)).strip()
 
-        # Minimal words check on question
-        if question:
-            try:
-                words = [w for w in question.split() if w.strip()]
-                if len(words) < MIN_MESSAGE_WORDS:
-                    await message.answer(
-                        get_text('prompts.min_words', language),
-                        reply_markup=get_back_keyboard(language)
-                    )
-                    return
-            except Exception:
-                pass
+        # Removed minimal words enforcement on poll question
 
         # Analyze for ads/profanity/spam
         has_ads = contains_ad_words(joined_text) if joined_text else False

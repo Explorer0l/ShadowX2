@@ -831,6 +831,22 @@ def spam_score(text: str) -> float:
     except Exception:
         pass
 
+    # - character diversity and repetition ratio
+    try:
+        unique_chars = len(set(t))
+        if len(t) >= 15:
+            diversity = unique_chars / len(t)
+            if diversity < 0.2:
+                score += 0.3
+        # repeated syllable-like patterns (e.g., 'ла ла ла', 'ала ала ала')
+        if re.search(r"(?i)\b([\wа-яё]{2,3})\b(?:\s+\1\b){2,}", t):
+            score += 0.35
+        # repeated 2-3 letter fragments joined in longer tokens (e.g., талу-тулу-тулу)
+        if re.search(r"(?i)([\wа-яё]{2,3}).*\1.*\1", t):
+            score += 0.2
+    except Exception:
+        pass
+
     # - consonant cluster heuristic (random latin clusters)
     consonant_runs = re.findall(r"(?i)\b[b-df-hj-np-tv-z]{5,}\b", t)
     if consonant_runs:
@@ -862,7 +878,32 @@ def contains_spam(text: str) -> bool:
         ai = _ai_spam_score_sync(text)
     except Exception:
         ai = 0.0
-    return base >= float(SPAM_SCORE_THRESHOLD) or (AI_SPAM_ENABLED and ai >= float(AI_SPAM_THRESHOLD))
+    # Fast path: if heuristics or AI exceed thresholds
+    if base >= float(SPAM_SCORE_THRESHOLD) or (AI_SPAM_ENABLED and ai >= float(AI_SPAM_THRESHOLD)):
+        return True
+    # Optional: near-duplicate detection against recent DB messages (lightweight)
+    try:
+        from database import get_recent_message_texts  # lazy import to avoid circulars
+        recent = get_recent_message_texts(limit=150)
+        if recent:
+            import re
+            from difflib import SequenceMatcher
+            candidate = re.sub(r"\s+", " ", (text or "").strip().lower())[:400]
+            if len(candidate) >= 12:
+                # Compare with top-N recent short texts for speed
+                for ref in recent[:80]:
+                    ref_norm = re.sub(r"\s+", " ", (ref or "").strip().lower())[:400]
+                    if not ref_norm or ref_norm == candidate:
+                        continue
+                    # Skip if ref is long and candidate is very short (reduce false hits)
+                    if len(ref_norm) > 60 and len(candidate) < 25:
+                        continue
+                    ratio = SequenceMatcher(a=candidate, b=ref_norm).ratio()
+                    if ratio >= 0.92:
+                        return True
+    except Exception:
+        pass
+    return False
 
 def filter_profanity(text):
     """Filter profanity from text by replacing matched spans with asterisks.

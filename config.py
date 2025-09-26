@@ -128,16 +128,28 @@ AI_CACHE_SIZE = 1000  # Cache recent AI results
 # Translation settings
 # Enable automatic translation of user content to English on publish
 AUTO_TRANSLATE_ENABLED = os.getenv("AUTO_TRANSLATE_ENABLED", "1") in ("1", "true", "True", "yes", "on")
+# Translate all non-English messages regardless of source list
+AUTO_TRANSLATE_ALL = os.getenv("AUTO_TRANSLATE_ALL", "0") in ("1", "true", "True", "yes", "on")
 # Comma-separated ISO-639-1 language codes to force-translate to English
 # ru, tg (Tajik), kk (Kazakh), zh (Chinese), uz (Uzbek), ky (Kyrgyz)
 AUTO_TRANSLATE_SOURCE_LANGS = [x.strip().lower() for x in os.getenv(
     "AUTO_TRANSLATE_SOURCE_LANGS",
-    "ru,tg,kk,zh,uz,ky"
+    # Include likely misclassifications for Tajik texts (sr, mk, fa)
+    "ru,tg,kk,zh,uz,ky,sr,mk,fa"
 ).split(',') if x.strip()]
-TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "auto")  # auto|google|libre|none
+TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "azure")  # auto|azure|google|libre|deepl|none
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "")
 # Optional: DeepL API key to use high-quality translations when available
 DEEPL_API_KEY = os.getenv("DEEPL_API_KEY", "8c836906-244b-4b8b-8942-8bb250064d70:fx")
+
+# Azure Cognitive Services Translator (recommended for higher accuracy across CIS/Asian languages)
+# Set these to enable Azure provider: TRANSLATION_PROVIDER=azure or TRANSLATION_PROVIDER=auto
+AZURE_TRANSLATOR_KEY = os.getenv("AZURE_TRANSLATOR_KEY", "")
+AZURE_TRANSLATOR_REGION = os.getenv("AZURE_TRANSLATOR_REGION", "")  # e.g., eastus, westeurope
+AZURE_TRANSLATOR_ENDPOINT = os.getenv(
+    "AZURE_TRANSLATOR_ENDPOINT",
+    "https://api.cognitive.microsofttranslator.com"
+)
 
 # English profanity model (HF) to complement RU model
 AI_EN_PROFANITY_MODEL = os.getenv("AI_EN_PROFANITY_MODEL", "unitary/unbiased-toxic-roberta")

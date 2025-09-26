@@ -557,6 +557,29 @@ def get_messages_to_send():
         logging.error(f"Error getting messages to send: {e}")
         return []
 
+def get_recent_message_texts(limit: int = 200) -> list[str]:
+    """Return recent message texts (filtered_content preferred) ordered by newest first.
+    Includes messages with status 'approved' or 'pending'.
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                SELECT COALESCE(filtered_content, content) AS text
+                FROM messages
+                WHERE text IS NOT NULL AND TRIM(text) <> ''
+                  AND status IN ('approved', 'pending')
+                ORDER BY message_id DESC
+                LIMIT ?
+                ''', (int(limit),)
+            )
+            rows = cursor.fetchall()
+            return [row[0] for row in rows if row and row[0]]
+    except sqlite3.Error as e:
+        logging.error(f"Error fetching recent message texts: {e}")
+        return []
+
 def mark_message_as_sent(queue_id):
     """Mark a queued message as sent"""
     try:
