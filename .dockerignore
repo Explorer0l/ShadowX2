@@ -1,13 +1,25 @@
+# Prevent large local artifacts from bloating the Docker build context
+venv/
+.env
+.git/
+.gitignore
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.db-wal
+*.db-shm
 *.log
-.env
-.venv*/
-.git/
-.gitignore
-bot_database.db
-.idea/
-.vscode/
+logs/
+log/
+.cache/
+.cache/**
+.DS_Store
+node_modules/
+
+# Project runtime data should be mounted as volumes, not baked in
+/data/
+logs/
+cache/
+app/cache/
 

@@ -94,18 +94,10 @@ UNIVERSITIES = {
     "XIAMEN": "@shadow_xiamen_talk"
 }
 
-# Message types and their hashtags
+# Message types and their hashtags (English-only)
 MESSAGE_TYPES = {
-    "ru": {
-        "🆘Поддержка🆘": "❗️❗️❗️#НужнаПомощь❗️❗️❗️",
-        "💞Признание💞": "💞#ВниманиеПризнание💞",
-        "📩Обычное сообщение📩": ""
-    },
-    "en": {
-        "🆘Support🆘": "❗️❗️❗️#NeedHelp❗️❗️❗️",
-        "💞Confession💞": "💞#AttentionConfession💞",
-        "📩Regular message📩": ""
-    }
+    "🆘Support🆘": "❗️❗️❗️#NeedHelp❗️❗️❗️",
+    "📩Regular message📩": ""
 }
 
 # Queue settings - pacing for outgoing posts (safer defaults; override via env)
@@ -132,6 +124,18 @@ AI_PROFANITY_DETECTION_ONLY = False  # combine AI + rules
 # Performance optimizations
 AI_USE_ASYNC = True  # Use async AI processing to avoid blocking
 AI_CACHE_SIZE = 1000  # Cache recent AI results
+
+# Translation settings
+# Enable automatic translation of user content to English on publish
+AUTO_TRANSLATE_ENABLED = os.getenv("AUTO_TRANSLATE_ENABLED", "1") in ("1", "true", "True", "yes", "on")
+# Comma-separated ISO-639-1 language codes to force-translate to English
+# ru, tg (Tajik), kk (Kazakh), zh (Chinese), uz (Uzbek), ky (Kyrgyz)
+AUTO_TRANSLATE_SOURCE_LANGS = [x.strip().lower() for x in os.getenv(
+    "AUTO_TRANSLATE_SOURCE_LANGS",
+    "ru,tg,kk,zh,uz,ky"
+).split(',') if x.strip()]
+TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "auto")  # auto|google|libre|none
+LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "")
 
 # Poll settings
 POLL_IS_ANONYMOUS = os.getenv("POLL_IS_ANONYMOUS", "1") in ("1", "true", "True", "yes", "on")

@@ -38,22 +38,11 @@ async def on_startup():
     """Actions to perform when the bot starts"""
     # Initialize the database
     init_db()
-    # Register bot commands for suggestion menu
+    # Register bot commands (English-only)
     try:
-        # Russian
-        await bot.set_my_commands([
-            BotCommand(command="start", description="Начать"),
-            BotCommand(command="help", description="Помощь"),
-        ], language_code="ru")
-        # English
         await bot.set_my_commands([
             BotCommand(command="start", description="Start"),
             BotCommand(command="help", description="Help"),
-        ], language_code="en")
-        # Default (shown if language not matched)
-        await bot.set_my_commands([
-            BotCommand(command="start", description="Start / Начать"),
-            BotCommand(command="help", description="Help / Помощь"),
         ])
     except Exception:
         logging.exception("Failed to set bot commands")

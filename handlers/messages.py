@@ -50,10 +50,7 @@ async def register_message_handlers(dp, bot):
         user = get_user(user_id)
         language = user[3] if user and user[3] else 'en'
 
-        if language == 'ru':
-            commands_text = "Доступные команды:\n/start — начать заново\n/help — помощь и правила"
-        else:
-            commands_text = "Available commands:\n/start — restart\n/help — help & rules"
+        commands_text = "Available commands:\n/start — restart\n/help — help & rules"
 
         text = (
             f"{get_text('welcome', language)}\n\n"
@@ -79,11 +76,7 @@ async def register_message_handlers(dp, bot):
     # University selection flow removed; default university is set automatically
     
     @dp.message(lambda message: message.text in [
-        get_text("message_types.help", "ru"), 
-        get_text("message_types.confession", "ru"), 
-        get_text("message_types.regular", "ru"),
         get_text("message_types.help", "en"),
-        get_text("message_types.confession", "en"),
         get_text("message_types.regular", "en")
     ])
     async def handle_message_type_selection(message: types.Message):
@@ -109,7 +102,7 @@ async def register_message_handlers(dp, bot):
         )
     
     # Suggest Idea entry point
-    @dp.message(lambda message: message.text in [get_text("suggest_idea", "ru"), get_text("suggest_idea", "en")])
+    @dp.message(lambda message: message.text in [get_text("suggest_idea", "en")])
     async def handle_suggest_idea_button(message: types.Message):
         user_id = message.from_user.id
         user = get_user(user_id)
@@ -119,7 +112,7 @@ async def register_message_handlers(dp, bot):
         state.user_data[user_id]['awaiting_idea'] = True
         await message.answer(get_text("write_idea", language), reply_markup=get_back_keyboard(language))
 
-    @dp.message(lambda message: message.text in [get_text("back", "ru"), get_text("back", "en")])
+    @dp.message(lambda message: message.text in [get_text("back", "en")])
     async def handle_back_command(message: types.Message):
         user_id = message.from_user.id
         user_data = state.user_data
@@ -158,13 +151,10 @@ async def register_message_handlers(dp, bot):
         if message.text.startswith('/'):
             return
         
-        # Skip language selection buttons
-        if "🇷🇺" in message.text or "🇺🇸" in message.text:
-            return
+        # Language selection UI is removed; no need to handle flag buttons
         
         # Skip admin command buttons
         admin_commands = [
-            get_text("admin_commands.check_queue", "ru"),
             get_text("admin_commands.check_queue", "en")
         ]
         if message.text in admin_commands:
@@ -172,7 +162,7 @@ async def register_message_handlers(dp, bot):
 
         # Handle idea text if awaiting
         if user_id in user_data and user_data[user_id].get('awaiting_idea'):
-            language = user[3] if user and user[3] else 'ru'
+            language = user[3] if user and user[3] else 'en'
             try:
                 from database import add_idea
                 idea_id = add_idea(user_id=user_id, content=message.text)
@@ -231,7 +221,7 @@ async def register_message_handlers(dp, bot):
         text = message.text
         university = user[2]
         message_type = user_data[user_id]['message_type']
-        language = user[3] if user and user[3] else 'ru'
+        language = user[3] if user and user[3] else 'en'
         # Enforce minimal words
         try:
             words = [w for w in (text or '').split() if w.strip()]
@@ -307,9 +297,9 @@ async def register_message_handlers(dp, bot):
                         # Localize buttons for each recipient
                         try:
                             admin_user = get_user(recipient_id)
-                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'en'
                         except Exception:
-                            admin_language = 'ru'
+                            admin_language = 'en'
                         await bot.send_message(
                             recipient_id,
                             f"⚠️ Message for moderation (ID: {message_id})\n\n"

@@ -31,14 +31,14 @@ async def notify_admins_about_moderator_action(bot, moderator_id, action_type, u
             moderator_name = f"ID:{moderator_id}"
         
         # Prepare content for notification (show full content, not truncated)
-        display_content = content if content else (caption if caption else "Нет содержимого")
+        display_content = content if content else (caption if caption else "No content")
         
         # Send notification to all admins
         for admin_id in ADMIN_IDS:
             try:
                 # Get admin language
                 admin_user = get_user(admin_id)
-                admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+                admin_language = admin_user[3] if admin_user and admin_user[3] else 'en'
                 
                 # Get localized notification text
                 try:
@@ -53,9 +53,9 @@ async def notify_admins_about_moderator_action(bot, moderator_id, action_type, u
                     logging.warning(f"Missing translation key: moderator_actions.{action_type} for language {admin_language}")
                     # Fallback notification
                     action_emoji = "✅" if "approved" in action_type else "❌"
-                    content_type_ru = "медиа" if "media" in action_type else "сообщение"
-                    action_ru = "одобрил" if "approved" in action_type else "отклонил"
-                    notification_text = f"{action_emoji} Модератор {moderator_name} {action_ru} {content_type_ru} #{message_id} от пользователя {user_id}:\n\n📝 {display_content}"
+                    action_verb = "approved" if "approved" in action_type else "rejected"
+                    content_type_en = "media" if "media" in action_type else "message"
+                    notification_text = f"{action_emoji} Moderator {moderator_name} {action_verb} {content_type_en} #{message_id} for user {user_id}:\n\n📝 {display_content}"
                 
                 await bot.send_message(admin_id, notification_text)
                 
@@ -66,14 +66,10 @@ async def notify_admins_about_moderator_action(bot, moderator_id, action_type, u
         logging.exception(f"Error in notify_admins_about_moderator_action: {e}")
 
 # Admin decision keyboards
-def get_admin_decision_keyboard(message_id, language='ru'):
+def get_admin_decision_keyboard(message_id, language='en'):
     """Get admin decision keyboard for message moderation (localized, no skip)."""
-    if language == 'en':
-        approve_text = "✅ Approve"
-        reject_text = "❌ Reject"
-    else:
-        approve_text = "✅ Одобрить"
-        reject_text = "❌ Отклонить"
+    approve_text = "✅ Approve"
+    reject_text = "❌ Reject"
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text=approve_text, callback_data=f"approve_{message_id}"),
@@ -89,10 +85,8 @@ async def register_moderation_handlers(dp, bot):
     """Register moderation-related handlers"""
     
     @dp.message(lambda message: message.text in [
-        get_text("admin_commands.check_queue", "ru"),
         get_text("admin_commands.check_queue", "en"),
         # Allow via moderator panel as well (same label)
-        get_text("moderator_commands.check_queue", "ru"),
         get_text("moderator_commands.check_queue", "en"),
     ])
     async def show_moderation_queue_handler(message: types.Message):
@@ -111,7 +105,7 @@ async def register_moderation_handlers(dp, bot):
             try:
                 from database import get_user as _get_user
                 u = _get_user(message.from_user.id)
-                lang = u[3] if u and u[3] else 'ru'
+                lang = u[3] if u and u[3] else 'en'
             except Exception:
                 lang = 'ru'
             await message.answer(get_text('result.queue_empty', lang))
@@ -121,9 +115,9 @@ async def register_moderation_handlers(dp, bot):
         try:
             from database import get_user as _get_user
             admin_user = _get_user(message.from_user.id)
-            admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+            admin_language = admin_user[3] if admin_user and admin_user[3] else 'en'
         except Exception:
-            admin_language = 'ru'
+            admin_language = 'en'
 
         for msg in pending_messages:
             message_id, user_id, university, message_type, content, filtered_content, media_type, file_id, status, reason, timestamp = msg
@@ -232,7 +226,7 @@ async def register_moderation_handlers(dp, bot):
             # Determine user language for notifications
             try:
                 u = get_user(db_user_id)
-                language = u[3] if u and u[3] else 'ru'
+                language = u[3] if u and u[3] else 'en'
             except Exception:
                 language = 'ru'
             # Reconstruct moderation payload compatible with rest of flow
@@ -371,7 +365,6 @@ async def register_moderation_handlers(dp, bot):
     
     # Panels
     @dp.message(lambda message: message.text in [
-        get_text("admin_commands.admin_panel", "ru"),
         get_text("admin_commands.admin_panel", "en"),
     ])
     async def open_admin_panel(message: types.Message):
@@ -380,7 +373,7 @@ async def register_moderation_handlers(dp, bot):
         try:
             from database import get_user as _get_user
             u = _get_user(message.from_user.id)
-            lang = u[3] if u and u[3] else 'ru'
+            lang = u[3] if u and u[3] else 'en'
         except Exception:
             lang = 'ru'
         await message.answer(get_text('menu.admin_title', lang), reply_markup=get_admin_panel_keyboard(lang))
@@ -440,7 +433,6 @@ async def register_moderation_handlers(dp, bot):
             await bot.send_message(chat_id, text, reply_markup=kb)
 
     @dp.message(lambda message: message.text in [
-        get_text("admin_commands.ideas_history", "ru"),
         get_text("admin_commands.ideas_history", "en"),
     ])
     async def cmd_ideas_history(message: types.Message):
@@ -449,7 +441,7 @@ async def register_moderation_handlers(dp, bot):
         try:
             from database import get_user as _get_user
             u = _get_user(message.from_user.id)
-            lang = u[3] if u and u[3] else 'ru'
+            lang = u[3] if u and u[3] else 'en'
         except Exception:
             lang = 'ru'
         await _send_ideas_page(message.chat.id, lang, page=1)
@@ -462,7 +454,7 @@ async def register_moderation_handlers(dp, bot):
         # Determine language
         try:
             u = get_user(user_id)
-            lang = u[3] if u and u[3] else 'ru'
+            lang = u[3] if u and u[3] else 'en'
         except Exception:
             lang = 'ru'
         # Parse action
@@ -533,7 +525,6 @@ async def register_moderation_handlers(dp, bot):
         await bot.send_message(callback_query.message.chat.id, text)
 
     @dp.message(lambda message: message.text in [
-        get_text("moderator_commands.moderator_panel", "ru"),
         get_text("moderator_commands.moderator_panel", "en"),
     ])
     async def open_moderator_panel(message: types.Message):
@@ -542,22 +533,20 @@ async def register_moderation_handlers(dp, bot):
             if not _is_moderator(message.from_user.id) and not is_admin(message.from_user.id):
                 return
             u = _get_user(message.from_user.id)
-            lang = u[3] if u and u[3] else 'ru'
+            lang = u[3] if u and u[3] else 'en'
         except Exception:
             lang = 'ru'
         await message.answer(get_text('menu.moderator_title', lang), reply_markup=get_moderator_panel_keyboard(lang))
 
     @dp.message(lambda message: message.text in [
-        get_text("admin_commands.back_main", "ru"),
         get_text("admin_commands.back_main", "en"),
-        get_text("moderator_commands.back_main", "ru"),
         get_text("moderator_commands.back_main", "en"),
     ])
     async def back_to_main_menu(message: types.Message):
         try:
             from database import get_user as _get_user, is_moderator as _is_moderator
             u = _get_user(message.from_user.id)
-            lang = u[3] if u and u[3] else 'ru'
+            lang = u[3] if u and u[3] else 'en'
             is_mod = _is_moderator(message.from_user.id)
         except Exception:
             lang = 'ru'
@@ -569,7 +558,6 @@ async def register_moderation_handlers(dp, bot):
 
     # Moderators management (admin only)
     @dp.message(lambda message: message.text in [
-        get_text("admin_commands.add_moderator", "ru"),
         get_text("admin_commands.add_moderator", "en")
     ])
     async def cmd_add_moderator(message: types.Message):
@@ -578,7 +566,7 @@ async def register_moderation_handlers(dp, bot):
         try:
             from database import get_user as _get_user
             u = _get_user(message.from_user.id)
-            lang = u[3] if u and u[3] else 'ru'
+            lang = u[3] if u and u[3] else 'en'
         except Exception:
             lang = 'ru'
         # Show a small keyboard with Back to main / Back for cancelling input
@@ -591,7 +579,6 @@ async def register_moderation_handlers(dp, bot):
         st['awaiting_add_mod_id'] = True
 
     @dp.message(lambda message: message.text in [
-        get_text("admin_commands.remove_moderator", "ru"),
         get_text("admin_commands.remove_moderator", "en")
     ])
     async def cmd_remove_moderator(message: types.Message):
@@ -600,7 +587,7 @@ async def register_moderation_handlers(dp, bot):
         try:
             from database import get_user as _get_user
             u = _get_user(message.from_user.id)
-            lang = u[3] if u and u[3] else 'ru'
+            lang = u[3] if u and u[3] else 'en'
         except Exception:
             lang = 'ru'
         back_main = get_text('admin_commands.back_main', lang)
@@ -611,7 +598,6 @@ async def register_moderation_handlers(dp, bot):
         state.user_data[message.from_user.id]['awaiting_remove_mod'] = True
 
     @dp.message(lambda message: message.text in [
-        get_text("admin_commands.rename_moderator", "ru"),
         get_text("admin_commands.rename_moderator", "en")
     ])
     async def cmd_rename_moderator(message: types.Message):
@@ -620,7 +606,7 @@ async def register_moderation_handlers(dp, bot):
         try:
             from database import get_user as _get_user
             u = _get_user(message.from_user.id)
-            lang = u[3] if u and u[3] else 'ru'
+            lang = u[3] if u and u[3] else 'en'
         except Exception:
             lang = 'ru'
         back_main = get_text('admin_commands.back_main', lang)
@@ -631,7 +617,6 @@ async def register_moderation_handlers(dp, bot):
         state.user_data[message.from_user.id]['awaiting_rename_mod_id'] = True
 
     @dp.message(lambda message: message.text in [
-        get_text("admin_commands.list_moderators", "ru"),
         get_text("admin_commands.list_moderators", "en")
     ])
     async def cmd_list_moderators(message: types.Message):
@@ -640,7 +625,7 @@ async def register_moderation_handlers(dp, bot):
         try:
             from database import get_user as _get_user, get_moderators_with_names
             u = _get_user(message.from_user.id)
-            lang = u[3] if u and u[3] else 'ru'
+            lang = u[3] if u and u[3] else 'en'
         except Exception:
             lang = 'ru'
         mods = []
@@ -672,7 +657,7 @@ async def register_moderation_handlers(dp, bot):
         try:
             from database import get_user as _get_user
             u = _get_user(message.from_user.id)
-            lang = u[3] if u and u[3] else 'ru'
+            lang = u[3] if u and u[3] else 'en'
         except Exception:
             lang = 'ru'
 

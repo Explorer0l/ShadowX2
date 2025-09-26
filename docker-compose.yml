@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        PREFETCH_MODELS: 1  # Pre-download AI models for faster startup
+        PREFETCH_MODELS: 0  # Keep image slim; models will populate cache volume at runtime
     image: shadowx-bot:latest
     container_name: shadowx-bot
     restart: unless-stopped

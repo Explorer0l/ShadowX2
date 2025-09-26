@@ -69,19 +69,14 @@ class MessageQueue:
                         from database import get_message_counter
                         message_number = get_message_counter(university)
                         
-                        # Get language for this user
+                        # Get language for this user (English-only default)
                         from database import get_user
                         user = get_user(user_id)
-                        language = user[3] if user else 'ru'
+                        language = user[3] if user else 'en'
                         
                         # Get hashtag for message type by matching literal label
                         from config import MESSAGE_TYPES
-                        hashtag = ""
-                        for lang_code in ("ru", "en"):
-                            tags = MESSAGE_TYPES.get(lang_code, {})
-                            if message_type in tags:
-                                hashtag = tags[message_type]
-                                break
+                        hashtag = MESSAGE_TYPES.get(message_type, "")
                         
                         # Format the final message
                         if media_type:

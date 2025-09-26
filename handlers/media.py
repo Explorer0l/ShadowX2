@@ -246,9 +246,9 @@ async def register_media_handlers(dp, bot):
                         # Localize buttons for each recipient
                         try:
                             admin_user = get_user(recipient_id)
-                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'en'
                         except Exception:
-                            admin_language = 'ru'
+                            admin_language = 'en'
                         await bot.send_photo(
                             recipient_id,
                             photo=file_id,
@@ -270,9 +270,9 @@ async def register_media_handlers(dp, bot):
                         # Localize buttons for each recipient
                         try:
                             admin_user = get_user(recipient_id)
-                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'en'
                         except Exception:
-                            admin_language = 'ru'
+                            admin_language = 'en'
                         await bot.send_video(
                             recipient_id,
                             video=file_id,
@@ -293,9 +293,9 @@ async def register_media_handlers(dp, bot):
                     try:
                         try:
                             admin_user = get_user(recipient_id)
-                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'en'
                         except Exception:
-                            admin_language = 'ru'
+                            admin_language = 'en'
                         await bot.send_audio(
                             recipient_id,
                             audio=file_id,
@@ -316,9 +316,9 @@ async def register_media_handlers(dp, bot):
                     try:
                         try:
                             admin_user = get_user(recipient_id)
-                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'en'
                         except Exception:
-                            admin_language = 'ru'
+                            admin_language = 'en'
                         await bot.send_video_note(
                             recipient_id,
                             video_note=file_id
@@ -342,9 +342,9 @@ async def register_media_handlers(dp, bot):
                     try:
                         try:
                             admin_user = get_user(recipient_id)
-                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+                            admin_language = admin_user[3] if admin_user and admin_user[3] else 'en'
                         except Exception:
-                            admin_language = 'ru'
+                            admin_language = 'en'
                         await bot.send_voice(
                             recipient_id,
                             voice=file_id,
@@ -508,9 +508,9 @@ async def register_media_handlers(dp, bot):
                 try:
                     try:
                         admin_user = get_user(recipient_id)
-                        admin_language = admin_user[3] if admin_user and admin_user[3] else 'ru'
+                        admin_language = admin_user[3] if admin_user and admin_user[3] else 'en'
                     except Exception:
-                        admin_language = 'ru'
+                        admin_language = 'en'
                     await bot.send_message(
                         recipient_id,
                         summary,
