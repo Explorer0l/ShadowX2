@@ -11,7 +11,8 @@ from typing import Iterable, List
 try:
     from config import (
         AI_PROFANITY_ENABLED, AI_PROFANITY_MODEL, AI_PROFANITY_BACKEND,
-        AI_LANG_ROUTING, AI_PROFANITY_THRESHOLD, AI_PROFANITY_DETECTION_ONLY
+        AI_LANG_ROUTING, AI_PROFANITY_THRESHOLD, AI_PROFANITY_DETECTION_ONLY,
+        AI_EN_PROFANITY_MODEL, AI_SPAM_ENABLED, AI_SPAM_MODEL, AI_SPAM_THRESHOLD
     )
 except Exception:
     AI_PROFANITY_ENABLED = os.getenv("AI_PROFANITY_ENABLED", "0") in ("1", "true", "True", "yes", "on")
@@ -23,6 +24,13 @@ except Exception:
     except Exception:
         AI_PROFANITY_THRESHOLD = 0.7
     AI_PROFANITY_DETECTION_ONLY = False
+    AI_EN_PROFANITY_MODEL = os.getenv("AI_EN_PROFANITY_MODEL", "unitary/unbiased-toxic-roberta")
+    AI_SPAM_ENABLED = os.getenv("AI_SPAM_ENABLED", "1") in ("1", "true", "True", "yes", "on")
+    AI_SPAM_MODEL = os.getenv("AI_SPAM_MODEL", "mrm8488/bert-tiny-finetuned-sms-spam-detection")
+    try:
+        AI_SPAM_THRESHOLD = float(os.getenv("AI_SPAM_THRESHOLD", "0.75"))
+    except Exception:
+        AI_SPAM_THRESHOLD = 0.75
 
 # Safe defaults for optional config
 try:
@@ -194,8 +202,12 @@ def _is_whitelisted_word(word: str) -> bool:
 _ai_available = False
 _hf_tokenizer = None
 _hf_model = None
+_hf_en_tokenizer = None
+_hf_en_model = None
 _detoxify_available = False
 _detoxify_model = None
+_spam_model = None
+_spam_tokenizer = None
 _langid_available = False
 _langid_fn = None
 _local_available = True  # always available
@@ -310,6 +322,40 @@ def _ensure_ai_loaded():
             print(f"AI moderation device: {'CUDA' if torch.cuda.is_available() else 'CPU'}")
         except Exception:
             logging.info("AI moderation device: CPU")
+
+    # Load English HF toxicity model
+    if _hf_en_model is None and _hf_en_tokenizer is None and AI_PROFANITY_BACKEND in ("hf", "ensemble") and os.environ.get("AI_DISABLE_HF") != "1":
+        try:
+            from transformers import AutoTokenizer, AutoModelForSequenceClassification
+            _hf_en_tokenizer = AutoTokenizer.from_pretrained(AI_EN_PROFANITY_MODEL)
+            _hf_en_model = AutoModelForSequenceClassification.from_pretrained(AI_EN_PROFANITY_MODEL)
+            try:
+                import torch  # type: ignore
+                dev = _get_device()
+                _hf_en_model.to(dev)
+                _hf_en_model.eval()
+            except Exception:
+                pass
+        except Exception:
+            _hf_en_model = None
+            _hf_en_tokenizer = None
+
+    # Load spam model
+    if AI_SPAM_ENABLED and _spam_model is None:
+        try:
+            from transformers import AutoTokenizer, AutoModelForSequenceClassification
+            _spam_tokenizer = AutoTokenizer.from_pretrained(AI_SPAM_MODEL)
+            _spam_model = AutoModelForSequenceClassification.from_pretrained(AI_SPAM_MODEL)
+            try:
+                import torch  # type: ignore
+                dev = _get_device()
+                _spam_model.to(dev)
+                _spam_model.eval()
+            except Exception:
+                pass
+        except Exception:
+            _spam_model = None
+            _spam_tokenizer = None
 
 async def ai_profanity_score_async(text: str) -> float:
     """Async version of profanity scoring to avoid blocking the event loop.
@@ -480,10 +526,61 @@ def _ai_profanity_score_sync(text: str) -> float:
     # Ensemble: max-of-experts for safety (we’d rather over-moderate than пропустить)
     return max(scores)
 
+def _ai_en_profanity_score_sync(text: str) -> float:
+    """English-only toxicity score using HF EN model."""
+    if _hf_en_model is None or _hf_en_tokenizer is None:
+        return 0.0
+    try:
+        import torch  # type: ignore
+        tokens = _hf_en_tokenizer(text, return_tensors="pt", truncation=True, max_length=256)
+        try:
+            dev = _get_device()
+            tokens = {k: v.to(dev) for k, v in tokens.items()}
+        except Exception:
+            pass
+        with torch.no_grad():
+            logits = _hf_en_model(**tokens).logits.squeeze(0)
+            probs = torch.sigmoid(logits).detach().cpu().tolist()
+        return float(max(probs)) if probs else 0.0
+    except Exception:
+        return 0.0
+
+def _ai_spam_score_sync(text: str) -> float:
+    """Spam probability using small HF model; returns 0..1."""
+    if not AI_SPAM_ENABLED or _spam_model is None or _spam_tokenizer is None:
+        return 0.0
+    try:
+        import torch  # type: ignore
+        tokens = _spam_tokenizer(text, return_tensors="pt", truncation=True, max_length=256)
+        try:
+            dev = _get_device()
+            tokens = {k: v.to(dev) for k, v in tokens.items()}
+        except Exception:
+            pass
+        with torch.no_grad():
+            logits = _spam_model(**tokens).logits.squeeze(0)
+            probs = torch.softmax(logits, dim=-1).detach().cpu().tolist()
+        if len(probs) >= 2:
+            return float(probs[1])
+        return float(max(probs)) if probs else 0.0
+    except Exception:
+        return 0.0
+
 def ai_profanity_score(text: str) -> float:
     """Synchronous wrapper that ensures models are loaded before scoring."""
     try:
         _ensure_ai_loaded()
+    except Exception:
+        pass
+    # Route EN texts to EN model as primary, combine with ensemble for safety
+    try:
+        lang = None
+        if AI_LANG_ROUTING:
+            import langid  # type: ignore
+            lang, _ = langid.classify(text)
+        if lang == 'en':
+            en_score = _ai_en_profanity_score_sync(text)
+            return max(en_score, _ai_profanity_score_sync(text))
     except Exception:
         pass
     return _ai_profanity_score_sync(text)
@@ -624,6 +721,11 @@ def spam_score(text: str) -> float:
     """Return spam score (0..1) using lightweight heuristics."""
     if not text: return 0.0
     t = text.strip()
+    # Normalize by removing zero-width obfuscation characters
+    try:
+        t = _strip_zero_width(t)
+    except Exception:
+        pass
     score = 0.0
     
     # Count various spam indicators
@@ -685,13 +787,82 @@ def spam_score(text: str) -> float:
         vowel_ratio = len(vowels) / max(1, len(letters))
         if vowel_ratio < 0.22 and len(letters) >= 12:
             score += 0.3
+
+    # - low alphanumeric ratio (too many symbols/noise)
+    noise = sum(1 for ch in t if not ch.isalnum() and not ch.isspace())
+    total = len(t)
+    if total >= 10:
+        noise_ratio = noise / total
+        if noise_ratio > 0.35:
+            score += min(0.6, 0.3 + (noise_ratio - 0.35) * 0.8)
+
+    # - leading noisy token: symbol/currency + digits at start
+    try:
+        if re.match(r"^\s*[^\w\s]{2,}\s*\d{1,5}", t) or re.match(r"^\s*[\(\[\{]?\s*[\$€£¥₽₹]?\s*[+\-]?\d{1,5}", t):
+            score += 0.35
+    except Exception:
+        pass
+
+    # - short-token heavy: many tokens with length <= 2
+    try:
+        tokens = re.findall(r"\b\w+\b", t)
+        if tokens:
+            short_token_count = sum(1 for w in tokens if len(w) <= 2)
+            if len(tokens) >= 4:
+                short_ratio = short_token_count / len(tokens)
+                if short_ratio >= 0.5:
+                    score += min(0.5, 0.2 + 0.2 * short_ratio)
+            # vowel-less tokens (likely gibberish like "sj", "rjebe")
+            vowel_less = 0
+            for w in tokens:
+                letters_in_w = re.findall(r"[A-Za-zА-Яа-яЁё]", w)
+                if letters_in_w and not re.search(r"[aeiouyаеёиоуыэюяAEIOUYАЕЁИОУЫЭЮЯ]", w):
+                    vowel_less += 1
+            if vowel_less >= 1:
+                # Stronger weight for at least one vowel-less token, additional per extra token
+                score += min(0.45, 0.15 + 0.1 * max(0, vowel_less - 1))
+            # mixed-script tokens (latin+cyrillic in same token) often indicate obfuscation
+            mixed_script = sum(1 for w in tokens if re.search(r"[A-Za-z]", w) and re.search(r"[А-Яа-яЁё]", w))
+            if mixed_script:
+                score += min(0.4, 0.2 + 0.1 * max(0, mixed_script - 1))
+            if mixed_script and vowel_less:
+                # Synergy: both obfuscations present
+                score += 0.1
+    except Exception:
+        pass
+
+    # - consonant cluster heuristic (random latin clusters)
+    consonant_runs = re.findall(r"(?i)\b[b-df-hj-np-tv-z]{5,}\b", t)
+    if consonant_runs:
+        score += min(0.5, 0.1 * sum(len(x) for x in consonant_runs))
+
+    # - language detection uncertainty (very short or unknown)
+    try:
+        import langid  # type: ignore
+        if len(t) >= 8:
+            lang, conf = langid.classify(t)
+            # If not a real language with decent confidence, bump score
+            if conf < 0.85 and len(letters) >= 10:
+                score += 0.25
+            # Penalize text that looks like random key smash in Latin (q/w/e/r spam)
+            if lang == 'en' and re.search(r"(?i)\b[qwertyuiopasdfghjklzxcvbnm]{8,}\b", t):
+                score += 0.3
+    except Exception:
+        pass
     
     return max(0.0, min(1.0, score))
 
 def contains_spam(text: str) -> bool:
     if not SPAM_ENABLED:
         return False
-    return spam_score(text) >= float(SPAM_SCORE_THRESHOLD)
+    base = spam_score(text)
+    ai = 0.0
+    try:
+        _ensure_ai_loaded()
+        ai = _ai_spam_score_sync(text)
+    except Exception:
+        ai = 0.0
+    return base >= float(SPAM_SCORE_THRESHOLD) or (AI_SPAM_ENABLED and ai >= float(AI_SPAM_THRESHOLD))
 
 def filter_profanity(text):
     """Filter profanity from text by replacing matched spans with asterisks.

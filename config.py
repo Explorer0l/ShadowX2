@@ -136,6 +136,20 @@ AUTO_TRANSLATE_SOURCE_LANGS = [x.strip().lower() for x in os.getenv(
 ).split(',') if x.strip()]
 TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "auto")  # auto|google|libre|none
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "")
+# Optional: DeepL API key to use high-quality translations when available
+DEEPL_API_KEY = os.getenv("DEEPL_API_KEY", "8c836906-244b-4b8b-8942-8bb250064d70:fx")
+
+# English profanity model (HF) to complement RU model
+AI_EN_PROFANITY_MODEL = os.getenv("AI_EN_PROFANITY_MODEL", "unitary/unbiased-toxic-roberta")
+
+# AI Spam detection settings (optional)
+AI_SPAM_ENABLED = os.getenv("AI_SPAM_ENABLED", "1") in ("1", "true", "True", "yes", "on")
+AI_SPAM_MODEL = os.getenv("AI_SPAM_MODEL", "mrm8488/bert-tiny-finetuned-sms-spam-detection")
+try:
+    # Slightly stricter by default to catch borderline spam
+    AI_SPAM_THRESHOLD = float(os.getenv("AI_SPAM_THRESHOLD", "0.7"))
+except Exception:
+    AI_SPAM_THRESHOLD = 0.7
 
 # Poll settings
 POLL_IS_ANONYMOUS = os.getenv("POLL_IS_ANONYMOUS", "1") in ("1", "true", "True", "yes", "on")
@@ -143,7 +157,8 @@ POLL_ALLOWS_MULTIPLE = os.getenv("POLL_MULTIPLE", "0") in ("1", "true", "True", 
 
 # Spam detection config
 SPAM_ENABLED = True
-SPAM_SCORE_THRESHOLD = float(os.getenv("SPAM_SCORE_THRESHOLD", "0.6"))
+# Tighten heuristic spam threshold a bit
+SPAM_SCORE_THRESHOLD = float(os.getenv("SPAM_SCORE_THRESHOLD", "0.55"))
 SPAM_DOMAIN_WHITELIST = _parse_str_list(os.getenv("SPAM_DOMAIN_WHITELIST", ""))
 SPAM_HANDLE_WHITELIST = _parse_str_list(os.getenv("SPAM_HANDLE_WHITELIST", ""))
 

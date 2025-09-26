@@ -9,6 +9,7 @@ import random
 from datetime import datetime, timedelta
 from database import add_message_to_queue, get_messages_to_send, mark_message_as_sent, get_last_scheduled_time
 from config import MESSAGE_QUEUE_MIN_INTERVAL, MESSAGE_QUEUE_MAX_INTERVAL, UNIVERSITIES
+from utils.translate import maybe_augment_with_english
 from aiogram.exceptions import TelegramRetryAfter, TelegramServerError, TelegramNetworkError, TelegramBadRequest
 
 class MessageQueue:
@@ -64,6 +65,13 @@ class MessageQueue:
                         
                         # Check if we need to use filtered content
                         send_content = filtered_content if filtered_content else content
+                        # Optionally augment with English translation (Original/English) for non-poll content
+                        try:
+                            if send_content and (not media_type or media_type != 'poll'):
+                                send_content = await maybe_augment_with_english(send_content)
+                        except Exception:
+                            # If translation fails, proceed with original content
+                            logging.debug("Translation step failed; using original text", exc_info=True)
                         
                         # Get message number for this university
                         from database import get_message_counter
