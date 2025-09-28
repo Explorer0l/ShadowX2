@@ -120,7 +120,7 @@ AI_PROFANITY_MODEL = os.getenv("AI_PROFANITY_MODEL", "cointegrated/rubert-tiny-t
 # Default to lightweight local rules; switch to 'ensemble' only if you install models
 AI_PROFANITY_BACKEND = os.getenv("AI_BACKEND", "ensemble")
 AI_LANG_ROUTING = True  # try to detect language and route models
-AI_PROFANITY_THRESHOLD = float(os.getenv("AI_PROFANITY_THRESHOLD", "0.7"))  # optimized threshold
+AI_PROFANITY_THRESHOLD = float(os.getenv("AI_PROFANITY_THRESHOLD", "0.85"))  # safer default to reduce false positives
 AI_PROFANITY_DETECTION_ONLY = False  # combine AI + rules
 # Performance optimizations
 AI_USE_ASYNC = True  # Use async AI processing to avoid blocking
@@ -164,10 +164,10 @@ AI_EN_PROFANITY_MODEL = os.getenv("AI_EN_PROFANITY_MODEL", "unitary/unbiased-tox
 AI_SPAM_ENABLED = os.getenv("AI_SPAM_ENABLED", "1") in ("1", "true", "True", "yes", "on")
 AI_SPAM_MODEL = os.getenv("AI_SPAM_MODEL", "mrm8488/bert-tiny-finetuned-sms-spam-detection")
 try:
-    # Slightly stricter by default to catch borderline spam
-    AI_SPAM_THRESHOLD = float(os.getenv("AI_SPAM_THRESHOLD", "0.7"))
+    # Raise default to reduce false positives on normal texts
+    AI_SPAM_THRESHOLD = float(os.getenv("AI_SPAM_THRESHOLD", "0.85"))
 except Exception:
-    AI_SPAM_THRESHOLD = 0.7
+    AI_SPAM_THRESHOLD = 0.85
 
 # Poll settings
 POLL_IS_ANONYMOUS = os.getenv("POLL_IS_ANONYMOUS", "1") in ("1", "true", "True", "yes", "on")
@@ -175,8 +175,8 @@ POLL_ALLOWS_MULTIPLE = os.getenv("POLL_MULTIPLE", "0") in ("1", "true", "True", 
 
 # Spam detection config
 SPAM_ENABLED = True
-# Tighten heuristic spam threshold a bit
-SPAM_SCORE_THRESHOLD = float(os.getenv("SPAM_SCORE_THRESHOLD", "0.55"))
+# Make heuristic spam threshold less aggressive by default
+SPAM_SCORE_THRESHOLD = float(os.getenv("SPAM_SCORE_THRESHOLD", "0.7"))
 SPAM_DOMAIN_WHITELIST = _parse_str_list(os.getenv("SPAM_DOMAIN_WHITELIST", ""))
 SPAM_HANDLE_WHITELIST = _parse_str_list(os.getenv("SPAM_HANDLE_WHITELIST", ""))
 

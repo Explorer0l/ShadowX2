@@ -205,7 +205,12 @@ def _build_prefix_suffix_pattern(stem: str) -> re.Pattern:
     parts = ["[" + "".join(re.escape(v) for v in _CHAR_VARIANTS.get(ch, [ch])) + "]"
              for ch in base]
     sep = r"[\W_]*"
-    pattern_str = r"(?<!\w)(?:[\wа-яё]{0,3}" + sep + r")?" + sep.join(parts) + r"[\wа-яё]{0,4}"
+    # For highly ambiguous stems like 'еб'/'ёб', avoid matching inside words
+    # (e.g., 'учёбное'). Require the stem to start at token boundary.
+    if base in {"еб", "ёб"}:
+        pattern_str = r"(?<!\w)" + sep.join(parts) + r"[\wа-яё]{0,4}"
+    else:
+        pattern_str = r"(?<!\w)(?:[\wа-яё]{0,3}" + sep + r")?" + sep.join(parts) + r"[\wа-яё]{0,4}"
     try:
         return re.compile(pattern_str, re.IGNORECASE | re.UNICODE)
     except re.error:
@@ -222,7 +227,13 @@ _WHITELIST_WORDS = [
     "учеба", "учебе", "учебы", "учебу", "учебой", "учебник", "учебника", "учебнику",
     "потребность", "потребности", "потребностью", "потребностей", "потребностям",
     "требует", "требуется", "требую", "требуешь", "требуем", "требуете", "требовать",
-    "ребенок", "ребенка", "ребенку", "ребенком", "ребенке", "ребята", "ребят", "ребятам"
+    "ребенок", "ребенка", "ребенку", "ребенком", "ребенке", "ребята", "ребят", "ребятам",
+    # кампус-related (to avoid false hits on substrings like "кус")
+    "кампус", "кампуса", "кампусу", "в кампусе", "кампусе", "кампусом",
+    "кампусный", "кампусная", "кампусное", "кампусной", "кампусном", "кампусные", "кампусных",
+    # учеба-related (avoid false hits from stems like 'ёб')
+    "учеба", "учёба", "учебный", "учебная", "учебное", "учебной", "учебном", "учебные", "учебных",
+    "учёбный", "учёбная", "учёбное", "учёбной", "учёбном", "учёбные", "учёбных"
 ]
 
 _BANNED_PREFIX_SUFFIX_PATTERNS = [_build_prefix_suffix_pattern(s) for s in _PREFIX_SENSITIVE_STEMS]
@@ -838,6 +849,14 @@ def spam_score(text: str) -> float:
         pass
     score = 0.0
     
+    # Determine script dominance once (used in multiple heuristics)
+    try:
+        cyr_letters_global = re.findall(r"[А-Яа-яЁё]", t)
+        lat_letters_global = re.findall(r"[A-Za-z]", t)
+        is_cyr_dom = len(cyr_letters_global) > len(lat_letters_global) * 1.5
+    except Exception:
+        is_cyr_dom = False
+    
     # Count various spam indicators
     counts = {k: len(v.findall(t)) for k, v in _REGEXES.items() if k in ['url', 'handle', 'phone']}
     # Apply whitelist reductions
@@ -887,8 +906,11 @@ def spam_score(text: str) -> float:
 
     # - long runs of alternating space/word length = 1-2 (e.g., "1 2 3 4 235 325")
     short_tokens = re.findall(r"\b[\w\d]{1,2}\b", t)
-    if len(short_tokens) >= 6:
-        score += min(0.5, 0.05 * len(short_tokens))
+    # For long texts, short tokens are more natural (prepositions, particles)
+    threshold = (10 if is_cyr_dom else 8) if len(t) > 600 else (8 if is_cyr_dom else 6)
+    if len(short_tokens) >= threshold:
+        base_short = min(0.5, 0.05 * len(short_tokens))
+        score += base_short * (0.3 if is_cyr_dom else 1.0)
 
     # - low vowel ratio heuristic (latin/cyrillic)
     vowels = re.findall(r"[aeiouyаеёиоуыэюяAEIOUYАЕЁИОУЫЭЮЯ]", t)
@@ -902,9 +924,19 @@ def spam_score(text: str) -> float:
     noise = sum(1 for ch in t if not ch.isalnum() and not ch.isspace())
     total = len(t)
     if total >= 10:
+        # For benign Cyrillic texts (no links/handles/phones/ads/CTA), discount neutral punctuation
+        benign_text = (counts.get('url', 0) == 0 and counts.get('handle', 0) == 0 and counts.get('phone', 0) == 0 and ad_hits == 0 and cta_hits == 0)
+        if is_cyr_dom and benign_text:
+            benign_punct = set("—–-«»“”„\"'.,:;!?()[]{}…")
+            noise_benign = sum(1 for ch in t if (not ch.isalnum() and not ch.isspace()) and (ch in benign_punct))
+            noise = max(0, noise - int(noise_benign * 0.8))
         noise_ratio = noise / total
-        if noise_ratio > 0.35:
-            score += min(0.6, 0.3 + (noise_ratio - 0.35) * 0.8)
+        threshold = 0.45 if is_cyr_dom else 0.35
+        if noise_ratio > threshold:
+            if is_cyr_dom:
+                score += min(0.4, 0.2 + (noise_ratio - threshold) * 0.5)
+            else:
+                score += min(0.6, 0.3 + (noise_ratio - threshold) * 0.8)
 
     # - leading noisy token: symbol/currency + digits at start
     try:
@@ -913,31 +945,40 @@ def spam_score(text: str) -> float:
     except Exception:
         pass
 
-    # - short-token heavy: many tokens with length <= 2
+    # - short-token heavy: many tokens with length <= 2 (attenuate for Cyrillic texts)
     try:
         tokens = re.findall(r"\b\w+\b", t)
         if tokens:
             short_token_count = sum(1 for w in tokens if len(w) <= 2)
             if len(tokens) >= 4:
                 short_ratio = short_token_count / len(tokens)
-                if short_ratio >= 0.5:
-                    score += min(0.5, 0.2 + 0.2 * short_ratio)
+                # For Cyrillic-dominant text, use a higher trigger and lower weight
+                trigger = 0.65 if is_cyr_dom else 0.5
+                if short_ratio >= trigger:
+                    base_bonus = min(0.5, 0.2 + 0.2 * short_ratio)
+                    score += base_bonus * (0.45 if is_cyr_dom else 1.0)
             # vowel-less tokens (likely gibberish like "sj", "rjebe")
             vowel_less = 0
             for w in tokens:
                 letters_in_w = re.findall(r"[A-Za-zА-Яа-яЁё]", w)
+                # Ignore very short tokens when counting vowel-less
+                if len(w) <= 2:
+                    continue
                 if letters_in_w and not re.search(r"[aeiouyаеёиоуыэюяAEIOUYАЕЁИОУЫЭЮЯ]", w):
                     vowel_less += 1
             if vowel_less >= 1:
                 # Stronger weight for at least one vowel-less token, additional per extra token
-                score += min(0.45, 0.15 + 0.1 * max(0, vowel_less - 1))
+                bonus = min(0.45, 0.15 + 0.1 * max(0, vowel_less - 1))
+                # Attenuate for Cyrillic-dominant texts to reduce false positives
+                score += bonus * (0.6 if is_cyr_dom else 1.0)
             # mixed-script tokens (latin+cyrillic in same token) often indicate obfuscation
             mixed_script = sum(1 for w in tokens if re.search(r"[A-Za-z]", w) and re.search(r"[А-Яа-яЁё]", w))
             if mixed_script:
                 score += min(0.4, 0.2 + 0.1 * max(0, mixed_script - 1))
             if mixed_script and vowel_less:
                 # Synergy: both obfuscations present
-                score += 0.1
+                # Reduce synergy bonus under Cyrillic-dominant text
+                score += 0.05 if is_cyr_dom else 0.1
     except Exception:
         pass
 
@@ -946,14 +987,19 @@ def spam_score(text: str) -> float:
         unique_chars = len(set(t))
         if len(t) >= 15:
             diversity = unique_chars / len(t)
-            if diversity < 0.2:
-                score += 0.3
+            # For long texts, diversity naturally decreases; adjust threshold
+            threshold = 0.15 if len(t) > 500 else 0.2
+            if diversity < threshold:
+                # Reduce penalty for Cyrillic texts and long texts
+                penalty = 0.15 if is_cyr_dom or len(t) > 800 else 0.3
+                score += penalty
         # repeated syllable-like patterns (e.g., 'ла ла ла', 'ала ала ала')
         if re.search(r"(?i)\b([\wа-яё]{2,3})\b(?:\s+\1\b){2,}", t):
             score += 0.35
         # repeated 2-3 letter fragments joined in longer tokens (e.g., талу-тулу-тулу)
         if re.search(r"(?i)([\wа-яё]{2,3}).*\1.*\1", t):
-            score += 0.2
+            # Attenuate for Cyrillic-dominant texts (common bigram repetition in RU)
+            score += (0.05 if is_cyr_dom else 0.2)
     except Exception:
         pass
 
@@ -968,8 +1014,10 @@ def spam_score(text: str) -> float:
         if len(t) >= 8:
             lang, conf = langid.classify(t)
             # If not a real language with decent confidence, bump score
-            if conf < 0.85 and len(letters) >= 10:
-                score += 0.25
+            # Note: langid confidence can be negative for very certain classifications
+            conf_threshold = 0.7 if is_cyr_dom else 0.85
+            if conf < conf_threshold and conf > -1000 and len(letters) >= 10:
+                score += (0.1 if is_cyr_dom else 0.25)
             # Penalize text that looks like random key smash in Latin (q/w/e/r spam)
             if lang == 'en' and re.search(r"(?i)\b[qwertyuiopasdfghjklzxcvbnm]{8,}\b", t):
                 score += 0.3
@@ -988,8 +1036,8 @@ def contains_spam(text: str) -> bool:
         ai = _ai_spam_score_sync(text)
     except Exception:
         ai = 0.0
-    # Fast path: if heuristics or AI exceed thresholds
-    if base >= float(SPAM_SCORE_THRESHOLD) or (AI_SPAM_ENABLED and ai >= float(AI_SPAM_THRESHOLD)):
+    # Fast path: require strictly greater than threshold to reduce borderline false positives
+    if base > float(SPAM_SCORE_THRESHOLD) or (AI_SPAM_ENABLED and ai > float(AI_SPAM_THRESHOLD)):
         return True
     # Optional: near-duplicate detection against recent DB messages (lightweight)
     try:
