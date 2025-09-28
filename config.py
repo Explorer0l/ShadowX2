@@ -97,7 +97,8 @@ UNIVERSITIES = {
 # Message types and their hashtags (English-only)
 MESSAGE_TYPES = {
     "🆘Support🆘": "❗️❗️❗️#NeedHelp❗️❗️❗️",
-    "📩Regular message📩": ""
+    "📩Regular message📩": "",
+    "💞Confession💞": "💞#AttentionConfession💞"
 }
 
 # Queue settings - pacing for outgoing posts (safer defaults; override via env)
@@ -114,9 +115,9 @@ AI_BATCH_SIZE = 5  # Batch AI requests for efficiency
 
 # AI profanity detection (optional). Heavy deps are disabled by default.
 # Enable by setting env AI_PROFANITY_ENABLED=1 when AI extras are installed.
-AI_PROFANITY_ENABLED = os.getenv("AI_PROFANITY_ENABLED", "0") in ("1", "true", "True", "yes", "on")
-AI_PROFANITY_MODEL = "cointegrated/rubert-tiny-toxicity"  # HF model for RU
-# Switch to ensemble for best accuracy if dependencies available; falls back gracefully
+AI_PROFANITY_ENABLED = os.getenv("AI_PROFANITY_ENABLED", "1") in ("1", "true", "True", "yes", "on")
+AI_PROFANITY_MODEL = os.getenv("AI_PROFANITY_MODEL", "cointegrated/rubert-tiny-toxicity")
+# Default to lightweight local rules; switch to 'ensemble' only if you install models
 AI_PROFANITY_BACKEND = os.getenv("AI_BACKEND", "ensemble")
 AI_LANG_ROUTING = True  # try to detect language and route models
 AI_PROFANITY_THRESHOLD = float(os.getenv("AI_PROFANITY_THRESHOLD", "0.7"))  # optimized threshold
@@ -125,22 +126,27 @@ AI_PROFANITY_DETECTION_ONLY = False  # combine AI + rules
 AI_USE_ASYNC = True  # Use async AI processing to avoid blocking
 AI_CACHE_SIZE = 1000  # Cache recent AI results
 
+# Enable translation-assisted auxiliary scoring for Central Asian languages (ky/uz/kk/tg)
+AI_PROFANITY_TRANSLATE_AUX = os.getenv("AI_PROFANITY_TRANSLATE_AUX", "1") in ("1", "true", "True", "yes", "on")
+
 # Translation settings
 # Enable automatic translation of user content to English on publish
 AUTO_TRANSLATE_ENABLED = os.getenv("AUTO_TRANSLATE_ENABLED", "1") in ("1", "true", "True", "yes", "on")
 # Translate all non-English messages regardless of source list
 AUTO_TRANSLATE_ALL = os.getenv("AUTO_TRANSLATE_ALL", "0") in ("1", "true", "True", "yes", "on")
 # Comma-separated ISO-639-1 language codes to force-translate to English
-# ru, tg (Tajik), kk (Kazakh), zh (Chinese), uz (Uzbek), ky (Kyrgyz)
+# ru, tg (Tajik), kk (Kazakh), zh (Chinese), uz (Uzbek), ky (Kyrgyz),
+# ar (Arabic), hi (Hindi)
 AUTO_TRANSLATE_SOURCE_LANGS = [x.strip().lower() for x in os.getenv(
     "AUTO_TRANSLATE_SOURCE_LANGS",
     # Include likely misclassifications for Tajik texts (sr, mk, fa)
-    "ru,tg,kk,zh,uz,ky,sr,mk,fa"
+    # and add Arabic/Hindi by default
+    "ru,tg,kk,zh,uz,ky,ar,hi,sr,mk,fa"
 ).split(',') if x.strip()]
 TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "azure")  # auto|azure|google|libre|deepl|none
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "")
 # Optional: DeepL API key to use high-quality translations when available
-DEEPL_API_KEY = os.getenv("DEEPL_API_KEY", "8c836906-244b-4b8b-8942-8bb250064d70:fx")
+DEEPL_API_KEY = os.getenv("DEEPL_API_KEY", "")
 
 # Azure Cognitive Services Translator (recommended for higher accuracy across CIS/Asian languages)
 # Set these to enable Azure provider: TRANSLATION_PROVIDER=azure or TRANSLATION_PROVIDER=auto

@@ -58,7 +58,8 @@ TEXTS = {
         "back": "⬅️Back⬅️",
         "message_types": {
             "help": "🆘Support🆘",
-            "regular": "📩Regular message📩"
+            "regular": "📩Regular message📩",
+            "confession": "💞Confession💞"
         },
         "admin_commands": {
             "admin_panel": "🛠Admin panel",
@@ -147,7 +148,7 @@ def get_user_keyboard(user_id, language='en', is_admin=False, is_moderator=False
     
     buttons = [
         [KeyboardButton(text=msg_types["help"]), KeyboardButton(text=msg_types["regular"])],
-        [KeyboardButton(text=get_text("suggest_idea", language))]
+        [KeyboardButton(text=msg_types["confession"]), KeyboardButton(text=get_text("suggest_idea", language))]
     ]
     
     if is_admin:

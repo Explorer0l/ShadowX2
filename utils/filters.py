@@ -4,7 +4,7 @@ Contains text filtering functions for profanity and ad detection
 """
 
 import re, os, asyncio, logging
-from typing import Iterable, List
+from typing import Iterable, List, Dict
 
 # Import AI-related settings from config, but be resilient during build-time prefetch
 # when BOT_TOKEN may be intentionally absent. Fallback to env/defaults in that case.
@@ -12,7 +12,8 @@ try:
     from config import (
         AI_PROFANITY_ENABLED, AI_PROFANITY_MODEL, AI_PROFANITY_BACKEND,
         AI_LANG_ROUTING, AI_PROFANITY_THRESHOLD, AI_PROFANITY_DETECTION_ONLY,
-        AI_EN_PROFANITY_MODEL, AI_SPAM_ENABLED, AI_SPAM_MODEL, AI_SPAM_THRESHOLD
+        AI_EN_PROFANITY_MODEL, AI_SPAM_ENABLED, AI_SPAM_MODEL, AI_SPAM_THRESHOLD,
+        AI_PROFANITY_TRANSLATE_AUX
     )
 except Exception:
     AI_PROFANITY_ENABLED = os.getenv("AI_PROFANITY_ENABLED", "0") in ("1", "true", "True", "yes", "on")
@@ -31,6 +32,7 @@ except Exception:
         AI_SPAM_THRESHOLD = float(os.getenv("AI_SPAM_THRESHOLD", "0.75"))
     except Exception:
         AI_SPAM_THRESHOLD = 0.75
+    AI_PROFANITY_TRANSLATE_AUX = os.getenv("AI_PROFANITY_TRANSLATE_AUX", "1") in ("1", "true", "True", "yes", "on")
 
 # Safe defaults for optional config
 try:
@@ -55,8 +57,11 @@ BANNED_WORDS = [
     "seks", "bla", "blya", "blat", "blyat", "kerm", "блять", "пиздец", "pizdec", "пиздес", "ахуеть", "axuyet", "охует",
     # English
     "fuck", "shit", "bitch", "asshole", "motherfucker", "dick", "pussy", "pusy",
-    # UZ (Latin) — minimal obscene stems
+    # UZ (Latin) — obscene/insult stems and common insults
     "sik", "siki", "sikish", "sikaman", "sikdim", "sikdi",
+    "kaltak",  # insult
+    "eshak",   # insult (donkey)
+    "ahmoq", "axmoq",  # stupid
     # RU/TJ common
     "kun","кун", "кунте", "kunte", "kunut", "kusut", "керм", "sex", "петка", "гой", "трахну", "трахать", "traxat", "trahat", "goy", "goydan", "petka",
     "охует", "охуеть", "ахуеть", "ахует", "guh", "гух", "gh", "гх", "гӯҳ", "гҳ", "дерьмо", "говно", "сучка",
@@ -65,6 +70,32 @@ BANNED_WORDS = [
     "сосем", "сосём", "сосете", "сосёте", "сосут", "соси", "сосите",
     # Частые базовые формы, которые могли отсутствовать
     "пизда", "пидор", "пидорас", "пидорасы", "ебать", "ебаться"
+]
+
+# Minimal Arabic/Hindi obscene stems for stronger moderation (exact/script match)
+# Arabic
+BANNED_WORDS += [
+    "كس", "كسم", "زب", "شرموطة", "شرموطه", "منيك", "منيكة", "خرا", "لعنة",
+]
+# Hindi/Devanagari
+BANNED_WORDS += [
+    "चूत", "चुतिया", "चूतिया", "भोसडी", "मादरचोद", "बहनचोद", "लंड", "लण्ड", "गांड",
+]
+
+# Kazakh (Cyrillic) core insults
+BANNED_WORDS += [
+    "қаншық", "сайқал", "жалап", "жәләп",
+]
+# Kyrgyz (Cyrillic) core insults
+BANNED_WORDS += [
+    "канчык", "канчы", "жалап",
+]
+
+# Multi-word phrase insults (Kazakh)
+_BANNED_PHRASES = [
+    "иттің баласы", "сайқал қатын", "шошқа-ит", "шошқа-ит неме", "шошқа-ит сол",
+    "байтал қатын", "әкеңнің басы", "атаңның басы", "атаңның қақ шекесі",
+    "әкеңнің аузын", "атаңның аузын"
 ]
 
 AD_RELATED_WORDS = [
@@ -142,6 +173,9 @@ def _build_pattern_from_word(word: str) -> re.Pattern:
 _pattern_cache = {}
 _BANNED_WORDS_SORTED = sorted(BANNED_WORDS, key=lambda w: len(re.sub(r"\s+", "", w)), reverse=True)
 _BANNED_PATTERNS = [_build_pattern_from_word(w) for w in _BANNED_WORDS_SORTED]
+_BANNED_WORDS_SET = set(w.lower() for w in BANNED_WORDS)
+# Direct mapping for quick verification of substring hits without scanning all patterns
+_BANNED_WORD_TO_PATTERN = {w.lower(): _build_pattern_from_word(w) for w in BANNED_WORDS}
 
 # Allow suffixes after obscene stems (to catch plural/cases: "пизда", "пидоразы", etc.)
 _SUFFIX_STEMS = [
@@ -149,7 +183,7 @@ _SUFFIX_STEMS = [
     # To catch forms like "охуели", "охуенно", "ахуенно", "охуел"
     "охуе", "ахуе", "хуе", "хуй",
     # EN/UZ stems
-    "fuck", "shit", "bitch", "sik",
+    "fuck", "shit", "bitch", "sik", "kaltak", "eshak", "ahmoq", "axmoq",
     # RU stronger variants with prefixes
     "заеб", "заёб", "ёб"
 ]
@@ -193,10 +227,13 @@ _WHITELIST_WORDS = [
 
 _BANNED_PREFIX_SUFFIX_PATTERNS = [_build_prefix_suffix_pattern(s) for s in _PREFIX_SENSITIVE_STEMS]
 
+# Optimize whitelist membership using a set (case-insensitive)
+_WHITELIST_WORDS_SET = set(w.lower() for w in _WHITELIST_WORDS)
+
 def _is_whitelisted_word(word: str) -> bool:
     """Check if a word is in the whitelist and should not be filtered."""
     word_lower = word.lower().strip()
-    return word_lower in _WHITELIST_WORDS
+    return word_lower in _WHITELIST_WORDS_SET
 
 # ---- AI Profanity (optional) ----
 _ai_available = False
@@ -227,7 +264,7 @@ def _get_device() -> str:
         return "cpu"
 
 def _ensure_ai_loaded():
-    global _ai_available, _hf_tokenizer, _hf_model, _detoxify_available, _detoxify_model, _langid_available, _langid_fn, _device, _device_logged
+    global _ai_available, _hf_tokenizer, _hf_model, _detoxify_available, _detoxify_model, _langid_available, _langid_fn, _device, _device_logged, _hf_en_model, _hf_en_tokenizer, _spam_model, _spam_tokenizer
     if not AI_PROFANITY_ENABLED:
         return
     # Load HF model/tokenizer directly only when needed (avoid heavy deps otherwise)
@@ -244,6 +281,21 @@ def _ensure_ai_loaded():
                 _hf_model.eval()
             except Exception:
                 _device = "cpu"
+            # Optional: load PEFT/LoRA adapter if provided
+            try:
+                adapter_path = os.getenv("AI_LORA_ADAPTER_PATH", "").strip()
+                if adapter_path:
+                    from peft import PeftModel  # type: ignore
+                    _hf_model = PeftModel.from_pretrained(_hf_model, adapter_path)
+                    try:
+                        import torch  # type: ignore
+                        _hf_model.to(_device)
+                        _hf_model.eval()
+                    except Exception:
+                        pass
+            except Exception:
+                # PEFT not installed or adapter invalid — ignore gracefully
+                pass
             _ai_available = True
         except Exception:
             _ai_available = False
@@ -376,6 +428,48 @@ async def ai_profanity_score_async(text: str) -> float:
     import asyncio
     loop = asyncio.get_event_loop()
     score = await loop.run_in_executor(None, _ai_profanity_score_sync, text)
+
+    # Optional translation-assisted auxiliary scoring for Central Asian langs
+    if AI_PROFANITY_TRANSLATE_AUX and AI_PROFANITY_ENABLED:
+        try:
+            # Light language gating to avoid unnecessary calls
+            lang = None
+            if AI_LANG_ROUTING:
+                try:
+                    import langid  # type: ignore
+                    lang, _ = langid.classify(text)
+                except Exception:
+                    lang = None
+            # Heuristics for Cyrillic-specific letters to correct misclassifications
+            t = text or ""
+            tajik_chars = set('ҳҲӣӢӯӮғҒқҚҷҶ')
+            ky_chars = set('өӨүҮңҢ')
+            kk_chars = set('әӘғҒқҚңҢұҰүҮһҺіІ')
+            if lang is None:
+                if any(ch in tajik_chars for ch in t):
+                    lang = 'tg'
+                elif any(ch in ky_chars for ch in t):
+                    lang = 'ky'
+                elif any(ch in kk_chars for ch in t):
+                    lang = 'kk'
+            if lang in {'ky', 'uz', 'kk', 'tg'} or _looks_uzbek_latin(text):
+                # Translate to English and score with EN model as auxiliary signal
+                try:
+                    from utils.translate import translate_to_en, detect_language  # lazy import
+                    detected = None
+                    try:
+                        detected = await detect_language(text)
+                    except Exception:
+                        detected = lang
+                    translated, provider = await translate_to_en(text, detected_lang=detected)
+                    if translated and isinstance(translated, str) and translated.strip() and translated.strip().lower() != (text or '').strip().lower():
+                        # Score translated text with EN model in executor
+                        en_score = await loop.run_in_executor(None, _ai_en_profanity_score_sync, translated)
+                        score = max(score, en_score)
+                except Exception:
+                    pass
+        except Exception:
+            pass
     
     # Cache result (with size limit)
     if len(_ai_cache) >= _ai_cache_max_size:
@@ -586,11 +680,13 @@ def ai_profanity_score(text: str) -> float:
     return _ai_profanity_score_sync(text)
 
 def ai_contains_profanity(text: str) -> bool:
-    return ai_profanity_score(text) >= float(AI_PROFANITY_THRESHOLD)
+    threshold = _lang_adjusted_threshold(text)
+    return ai_profanity_score(text) >= threshold
 
 async def ai_contains_profanity_async(text: str) -> bool:
     score = await ai_profanity_score_async(text)
-    return score >= float(AI_PROFANITY_THRESHOLD)
+    threshold = _lang_adjusted_threshold(text)
+    return score >= threshold
 
 def contains_banned_words(text):
     """Check if text contains banned words (robust against separators/leet/confusables)."""
@@ -602,18 +698,21 @@ def contains_banned_words(text):
     
     # Check if any words in the text are whitelisted
     words = re.findall(r'\b\w+\b', text.lower())
-    for word in words:
-        if _is_whitelisted_word(word):
-            # If we find whitelisted words, create a version without them for checking
-            temp_text = text
-            for whitelist_word in _WHITELIST_WORDS:
-                if whitelist_word.lower() in temp_text.lower():
-                    # Replace whitelisted word with placeholder
-                    temp_text = re.sub(r'\b' + re.escape(whitelist_word) + r'\b', 
-                                     '__SAFE__', temp_text, flags=re.IGNORECASE)
-            
-            # Check the text without whitelisted words
-            return _check_patterns_only(temp_text)
+    if any(_is_whitelisted_word(word) for word in words):
+        # Replace all whitelisted words in one pass using a precompiled regex
+        global _WHITELIST_REGEX
+        try:
+            _ = _WHITELIST_REGEX  # type: ignore[name-defined]
+        except NameError:
+            # Build lazily to avoid cost on import
+            if _WHITELIST_WORDS_SET:
+                pattern = r"\\b(?:" + "|".join(re.escape(w) for w in sorted(_WHITELIST_WORDS_SET, key=len, reverse=True)) + r")\\b"
+                _WHITELIST_REGEX = re.compile(pattern, re.IGNORECASE)
+            else:
+                _WHITELIST_REGEX = re.compile(r"(?!x)x")  # never matches
+        temp_text = _WHITELIST_REGEX.sub('__SAFE__', text)
+        # Check the text without whitelisted words
+        return _check_patterns_only(temp_text)
     
     # No whitelisted words found, proceed with normal checking
     return _check_patterns_only(text)
@@ -625,13 +724,12 @@ def _check_patterns_only(text):
         
     # Fast path: check exact word matches first (most common case)
     text_lower = text.lower()
-    for word in BANNED_WORDS:
-        if word in text_lower:
-            # Verify with pattern for accuracy
-            for pat in _BANNED_PATTERNS:
-                if pat.search(text):
-                    return True
-            break
+    # Narrow verification only to words that actually appear as substrings
+    hits = [w for w in _BANNED_WORDS_SET if w in text_lower]
+    for w in hits:
+        pat = _BANNED_WORD_TO_PATTERN.get(w)
+        if pat and pat.search(text):
+            return True
     
     # Full pattern matching if no quick hits
     for pat in _BANNED_SUFFIX_PATTERNS:
@@ -640,11 +738,23 @@ def _check_patterns_only(text):
     for pat in _BANNED_PREFIX_SUFFIX_PATTERNS:
         if pat.search(text):
             return True
+
+    # Phrase-level checks (exact match ignoring extra spaces/case/hyphens between tokens)
+    try:
+        t_norm = re.sub(r"\s+", " ", text.lower()).strip()
+        t_norm = t_norm.replace("-", "-")
+        for phrase in _BANNED_PHRASES:
+            p = re.sub(r"\s+", " ", phrase.lower()).strip()
+            if p and p in t_norm:
+                return True
+    except Exception:
+        pass
     
-    # AI layer (optional, conservative: only if strong AI hit)
+    # AI layer (optional, language-aware thresholds)
     if AI_PROFANITY_ENABLED:
         try:
-            if ai_profanity_score(text) >= max(0.85, float(AI_PROFANITY_THRESHOLD)):
+            thr = _lang_adjusted_threshold(text)
+            if ai_profanity_score(text) >= thr:
                 return True
         except Exception:
             pass
@@ -660,12 +770,11 @@ async def contains_banned_words_async(text):
     
     # Fast synchronous checks first
     text_lower = text.lower()
-    for word in BANNED_WORDS:
-        if word in text_lower:
-            for pat in _BANNED_PATTERNS:
-                if pat.search(text):
-                    return True
-            break
+    hits = [w for w in _BANNED_WORDS_SET if w in text_lower]
+    for w in hits:
+        pat = _BANNED_WORD_TO_PATTERN.get(w)
+        if pat and pat.search(text):
+            return True
     
     for pat in _BANNED_SUFFIX_PATTERNS:
         if pat.search(text):
@@ -674,11 +783,12 @@ async def contains_banned_words_async(text):
         if pat.search(text):
             return True
     
-    # AI layer (async to avoid blocking)
+    # AI layer (async to avoid blocking, language-aware thresholds)
     if AI_PROFANITY_ENABLED:
         try:
             score = await ai_profanity_score_async(text)
-            if score >= max(0.85, float(AI_PROFANITY_THRESHOLD)):
+            thr = _lang_adjusted_threshold(text)
+            if score >= thr:
                 return True
         except Exception:
             pass
@@ -937,10 +1047,15 @@ def filter_profanity(text):
 
     # Split text into words and check each word against whitelist
     words = re.findall(r'\b\w+\b', text)
+    # Use unique placeholders per whitelisted token to avoid collisions between
+    # different words of the same length (e.g., "тебя" vs "себя").
+    placeholder_map: Dict[str, str] = {}
     for word in words:
         if _is_whitelisted_word(word):
-            # Skip filtering for whitelisted words by temporarily replacing them
-            placeholder = f"__WHITELIST_{len(word)}__"
+            key = word.lower()
+            if key not in placeholder_map:
+                placeholder_map[key] = f"__WHITELIST_{len(word)}_{len(placeholder_map)}__"
+            placeholder = placeholder_map[key]
             text = text.replace(word, placeholder)
     
     filtered_text = text
@@ -948,11 +1063,15 @@ def filter_profanity(text):
         for pat in patterns:
             filtered_text = pat.sub(repl, filtered_text)
     
-    # Restore whitelisted words
+    # Restore whitelisted words using the unique placeholders map
+    # If the same lowercase token appears with different casing, the last
+    # occurrence determines the restored casing, matching prior behavior.
     for word in words:
         if _is_whitelisted_word(word):
-            placeholder = f"__WHITELIST_{len(word)}__"
-            filtered_text = filtered_text.replace(placeholder, word)
+            key = word.lower()
+            placeholder = placeholder_map.get(key)
+            if placeholder:
+                filtered_text = filtered_text.replace(placeholder, word)
     
     return filtered_text
 
@@ -971,7 +1090,7 @@ def _soft_tokenize(text: str) -> str:
 
 def _normalized_variants_for_ai(text: str) -> List[str]:
     if not text: return [""]
-    original = _strip_zero_width(text)
+    original = _normalize_uzbek_apostrophes(_strip_zero_width(text))
     variants = [original, _to_cyrillic_confusables(original)]
     variants.extend([_collapse_spaced_letters(variants[1]), _soft_tokenize(variants[2])])
     return list(dict.fromkeys(variants))  # Deduplicate preserving order
@@ -991,6 +1110,91 @@ def _strip_zero_width(text: str) -> str:
     if not text: return text
     zw_pattern = re.compile(r'[\u200b-\u200d\u2060-\u2064\ufeff]')
     return zw_pattern.sub('', text)
+
+def _normalize_uzbek_apostrophes(text: str) -> str:
+    """Normalize various apostrophes used in Uzbek Latin to a single ASCII ' for robust matching."""
+    if not text:
+        return text
+    try:
+        return text.replace('’', "'").replace('ʼ', "'").replace('ʻ', "'")
+    except Exception:
+        return text
+
+def _looks_arabic_script(s: str) -> bool:
+    try:
+        return any(("\u0600" <= ch <= "\u06FF") or ("\u0750" <= ch <= "\u077F") or ("\u08A0" <= ch <= "\u08FF") for ch in s)
+    except Exception:
+        return False
+
+def _looks_devanagari_script(s: str) -> bool:
+    try:
+        return any("\u0900" <= ch <= "\u097F" for ch in s)
+    except Exception:
+        return False
+
+def _looks_uzbek_latin(s: str) -> bool:
+    """Heuristic: detect Uzbek Latin text based on common tokens and markers.
+    This is intentionally lightweight and conservative.
+    """
+    try:
+        if not s:
+            return False
+        text = s
+        lower = text.lower()
+        # Typical Uzbek Latin tokens
+        uz_tokens = {
+            'salom', 'qalesiz', 'qalaysiz', 'rahmat', 'iltimos', 'siz', 'men', 'bugun', 'universitet',
+            'bekor', 'yahshi', 'yaxshi', 'kecha', 'ertaga', 'do\'st', "do'koni", 'o\'qish', "o'qish"
+        }
+        if any(tok in lower for tok in uz_tokens):
+            return True
+        # Apostrophes common in Uzbek Latin and affricates
+        if any(ch in text for ch in ["'", '’', 'ʼ', 'ʻ']):
+            return True
+        # Character sequence markers
+        if any(seq in lower for seq in [' sh', ' ch', 'ng ', ' o\'', " o'", ' g\'', " g'", ' o‘', ' g‘']):
+            return True
+        return False
+    except Exception:
+        return False
+
+def _lang_adjusted_threshold(text: str) -> float:
+    """Return toxicity threshold adjusted by detected language.
+    For ar/hi/uz/kk/ky we apply stricter moderation (lower threshold).
+    """
+    base = float(AI_PROFANITY_THRESHOLD)
+    strict_langs = {"ar", "hi", "uz", "kk", "ky", "tg"}
+    lang = None
+    try:
+        import langid  # type: ignore
+        if text and len(text) >= 3:
+            lang, _ = langid.classify(text)
+    except Exception:
+        lang = None
+    # Script-based fallback if langid is uncertain
+    if not lang:
+        if _looks_arabic_script(text):
+            lang = "ar"
+        elif _looks_devanagari_script(text):
+            lang = "hi"
+        else:
+            # Heuristics for Tajik/Kyrgyz/Kazakh Cyrillic-specific letters
+            try:
+                s = text or ""
+                if any(ch in set('ҳҲӣӢӯӮғҒқҚҷҶ') for ch in s):
+                    lang = "tg"
+                elif any(ch in set('өӨүҮңҢ') for ch in s):
+                    lang = "ky"
+                elif any(ch in set('әӘғҒқҚңҢұҰүҮһҺіІ') for ch in s):
+                    lang = "kk"
+            except Exception:
+                pass
+    # Treat Uzbek Latin as strict as well based on heuristics
+    if (lang in strict_langs) or _looks_uzbek_latin(text):
+        # Stricter moderation: allow AI to trigger at lower score
+        return max(0.55, min(base, 0.6))
+    # Default: conservative AI-only trigger, don't fire below 0.85 unless user configured higher
+    return max(0.85, base)
 
 def _cleanup_detoxify_cache():
     try:

@@ -43,6 +43,7 @@ async def on_startup():
         await bot.set_my_commands([
             BotCommand(command="start", description="Start"),
             BotCommand(command="help", description="Help"),
+            BotCommand(command="confession", description="Send anonymous confession"),
         ])
     except Exception:
         logging.exception("Failed to set bot commands")

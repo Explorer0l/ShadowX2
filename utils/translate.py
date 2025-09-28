@@ -61,6 +61,12 @@ async def detect_language(text: str) -> Optional[str]:
             # Quick Korean detection: Hangul syllables or jamo
             elif any('\uAC00' <= ch <= '\uD7A3' for ch in text) or any('\u1100' <= ch <= '\u11FF' or '\u3130' <= ch <= '\u318F' for ch in text):
                 code = 'ko'
+            # Quick Arabic detection: Arabic blocks
+            elif any(('\u0600' <= ch <= '\u06FF') or ('\u0750' <= ch <= '\u077F') or ('\u08A0' <= ch <= '\u08FF') for ch in text):
+                code = 'ar'
+            # Quick Hindi detection: Devanagari block
+            elif any('\u0900' <= ch <= '\u097F' for ch in text):
+                code = 'hi'
 
             if code == 'fa' and any('А' <= ch <= 'я' or ch in 'Ёё' for ch in text):
                 code = 'tg'
@@ -103,6 +109,10 @@ async def detect_language(text: str) -> Optional[str]:
                 text_low2 = text.lower()
                 if any(tok in text_low2 for tok in ky_tokens):
                     code = 'ky'
+            # Kazakh detection heuristics (Cyrillic-specific letters)
+            kk_cyr_chars = set('әӘғҒқҚңҢұҰүҮһҺіІ')
+            if any(ch in kk_cyr_chars for ch in text):
+                code = 'kk'
         except Exception:
             pass
         return code or None
@@ -270,6 +280,18 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
                 except Exception:
                     return False
 
+            def _contains_arabic(s: str) -> bool:
+                try:
+                    return any(('\u0600' <= ch <= '\u06FF') or ('\u0750' <= ch <= '\u077F') or ('\u08A0' <= ch <= '\u08FF') for ch in s)
+                except Exception:
+                    return False
+
+            def _contains_devanagari(s: str) -> bool:
+                try:
+                    return any('\u0900' <= ch <= '\u097F' for ch in s)
+                except Exception:
+                    return False
+
             def _looks_like_russian_transliteration(s: str) -> bool:
                 # Heuristic: romanized Russian patterns/tokens
                 patterns = ['ya', 'yu', 'yo', 'ye', 'zh', 'kh', 'ts', 'sh', 'sch', 'ch']
@@ -347,6 +369,16 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
                     return True
                 return False
 
+            def _looks_kazakh_cyrillic(s: str) -> bool:
+                s_low = s.lower()
+                kk_tokens = ['сәлем', 'қалайсың', 'қазақстан', 'жақсы', 'ертең']
+                if any(tok in s_low for tok in kk_tokens):
+                    return True
+                kk_cyr_chars = set('әӘғҒқҚңҢұҰүҮһҺіІ')
+                if any(ch in kk_cyr_chars for ch in s):
+                    return True
+                return False
+
             candidate_sources: list[str] = []
             # Prioritize Chinese explicitly to avoid romanization results from auto
             if _contains_cjk(text) or source_lang in {'zh', 'zh-cn', 'zh-tw', 'zh-cn', 'zh-tw'}:
@@ -356,6 +388,14 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
             if _contains_hangul(text) or source_lang == 'ko':
                 if 'ko' not in candidate_sources:
                     candidate_sources.append('ko')
+            # Prioritize Arabic when Arabic script present or detected
+            if _contains_arabic(text) or source_lang == 'ar':
+                if 'ar' not in candidate_sources:
+                    candidate_sources.append('ar')
+            # Prioritize Hindi when Devanagari present or detected
+            if _contains_devanagari(text) or source_lang == 'hi':
+                if 'hi' not in candidate_sources:
+                    candidate_sources.append('hi')
             # Prioritize Tajik when detected or specific letters present
             if source_lang == 'tg' or _contains_tajik_cyrillic(text):
                 for x in ['tg', 'ru', 'fa', 'uz']:
@@ -373,6 +413,10 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
             if _looks_kyrgyz_cyrillic(text) or source_lang == 'ky':
                 if 'ky' not in candidate_sources:
                     candidate_sources.append('ky')
+            # Prioritize Kazakh if heuristics say so
+            if _looks_kazakh_cyrillic(text) or source_lang == 'kk':
+                if 'kk' not in candidate_sources:
+                    candidate_sources.append('kk')
             # Then try auto
             if 'auto' not in candidate_sources:
                 candidate_sources.append('auto')

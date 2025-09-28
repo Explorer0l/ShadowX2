@@ -8,7 +8,7 @@ import logging
 from aiogram.filters import Command
 from database import get_user, add_user, add_message_to_db, is_banned
 from handlers.language import get_text, get_user_keyboard, get_back_keyboard, get_after_message_keyboard
-from utils.filters import contains_banned_words, contains_ad_words, filter_profanity, contains_spam, spam_score
+from utils.filters import contains_banned_words, contains_banned_words_async, contains_ad_words, filter_profanity, contains_spam, spam_score
 from config import ADMIN_ID, ADMIN_IDS, is_admin, UNIVERSITIES
 from utils.queue import MessageQueue
 import state
@@ -77,7 +77,8 @@ async def register_message_handlers(dp, bot):
     
     @dp.message(lambda message: message.text in [
         get_text("message_types.help", "en"),
-        get_text("message_types.regular", "en")
+        get_text("message_types.regular", "en"),
+        get_text("message_types.confession", "en"),
     ])
     async def handle_message_type_selection(message: types.Message):
         user_id = message.from_user.id
@@ -96,8 +97,24 @@ async def register_message_handlers(dp, bot):
             user_data[user_id] = {}
         
         user_data[user_id]['message_type'] = message.text
+        # If user selected Confession, show a focused prompt
+        selected = message.text
+        prompt = get_text("write_message", language)
+        if selected == get_text("message_types.confession", language):
+            prompt = "💞 Send your confession anonymously. Avoid personal data or doxxing."
+        await message.answer(prompt, reply_markup=get_back_keyboard(language))
+
+    @dp.message(Command("confession"))
+    async def confession_command(message: types.Message):
+        """Shortcut command to start a confession submission."""
+        user_id = message.from_user.id
+        user = get_user(user_id)
+        language = user[3] if user and user[3] else 'en'
+        if user_id not in state.user_data:
+            state.user_data[user_id] = {}
+        state.user_data[user_id]['message_type'] = get_text("message_types.confession", language)
         await message.answer(
-            get_text("write_message", language),
+            "💞 Send your confession anonymously. Avoid personal data or doxxing.",
             reply_markup=get_back_keyboard(language)
         )
     
@@ -226,7 +243,7 @@ async def register_message_handlers(dp, bot):
         
         # Check for ads/profanity/spam; these go to admin
         has_ads = contains_ad_words(text)
-        has_profanity = contains_banned_words(text)
+        has_profanity = await contains_banned_words_async(text)
         has_spam = contains_spam(text)
 
         if has_ads or has_profanity or has_spam:

@@ -9,7 +9,7 @@ from handlers.language import get_text, get_user_keyboard, get_after_message_key
 from handlers.moderation import get_admin_decision_keyboard
 from config import ADMIN_ID, ADMIN_IDS, ADMIN_USERNAME, is_admin, UNIVERSITIES
 import state
-from utils.filters import contains_ad_words, contains_banned_words, filter_profanity, contains_spam, spam_score
+from utils.filters import contains_ad_words, contains_banned_words, contains_banned_words_async, filter_profanity, contains_spam, spam_score
 
  # Use shared moderation queue from state and keyboard from moderation module
 
@@ -167,7 +167,7 @@ async def register_media_handlers(dp, bot):
         # Removed minimal words enforcement for captions
         # Analyze caption for ads/profanity/spam
         has_ads = contains_ad_words(caption) if caption else False
-        has_profanity = contains_banned_words(caption) if caption else False
+        has_profanity = await contains_banned_words_async(caption) if caption else False
         has_spam = contains_spam(caption) if caption else False
         filtered_caption = filter_profanity(caption) if has_profanity else caption
 
@@ -412,7 +412,7 @@ async def register_media_handlers(dp, bot):
 
         # Analyze for ads/profanity/spam
         has_ads = contains_ad_words(joined_text) if joined_text else False
-        has_profanity = contains_banned_words(joined_text) if joined_text else False
+        has_profanity = await contains_banned_words_async(joined_text) if joined_text else False
         has_spam = contains_spam(joined_text) if joined_text else False
         filtered_question = filter_profanity(question) if has_profanity else question
 
