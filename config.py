@@ -91,7 +91,7 @@ def is_admin(user_id: int) -> bool:
 
 # Universities and their channels
 UNIVERSITIES = {
-    "XIAMEN": "@shadow_xiamen_talk"
+    "XIAMEN": "@xmumShadowX"
 }
 
 # Message types and their hashtags (English-only)
