@@ -38,6 +38,58 @@ except Exception:
 
 # DeepL support removed by request; only Google/Libre are used.
 
+# ---------------------- English detection helpers ----------------------
+def _looks_english_text(output: str) -> bool:
+    """Heuristic: does the given text look like English (Latin script dominant)?
+    Conservative: requires Latin-dominant letters and very low Cyrillic/Han share.
+    """
+    if not output:
+        return False
+    letters = [ch for ch in output if ch.isalpha()]
+    if not letters:
+        return False
+    latin_like = 0
+    cyr = 0
+    han_kana = 0
+    for ch in letters:
+        try:
+            name = unicodedata.name(ch, '')
+        except Exception:
+            name = ''
+        if ('LATIN' in name) or ('a' <= ch.lower() <= 'z'):
+            latin_like += 1
+        elif ('CYRILLIC' in name) or ('а' <= ch.lower() <= 'я') or (ch in 'ёЁ'):
+            cyr += 1
+        elif ('CJK UNIFIED' in name) or ('HIRAGANA' in name) or ('KATAKANA' in name):
+            han_kana += 1
+    return latin_like >= max(1, int(0.7 * len(letters))) and (cyr + han_kana) <= int(0.05 * len(letters))
+
+def _is_english_text(text: str, detected_lang: Optional[str] = None) -> bool:
+    """Stronger check for English input to avoid unnecessary translation.
+    - If detector says 'en', accept immediately.
+    - Otherwise require English-looking script AND presence of common EN tokens.
+    """
+    if not text:
+        return False
+    if (detected_lang or '').lower() == 'en':
+        return True
+    if not _looks_english_text(text):
+        return False
+    # Require at least one common English token to reduce false positives on other Latin languages
+    try:
+        tokens = [t for t in re.findall(r"[A-Za-z']+", text.lower())]
+    except Exception:
+        tokens = []
+    common = {
+        'the','and','or','but','not','to','for','of','in','on','with','from',
+        'is','are','am','was','were','be','been','being',
+        'i','you','we','they','he','she','it','me','my','your','our','their',
+        'this','that','these','those','a','an','as','at','by','if','then','so',
+        'do','does','did','done','have','has','had','will','would','can','could','should','shall',
+        'hello','hi','hey','please','thanks','thank','ok','okay'
+    }
+    return any(t in common for t in tokens)
+
 async def detect_language(text: str) -> Optional[str]:
     """Detect language using langid. Returns ISO-639-1 code like 'ru', 'en', or None."""
     if not text or not _LANGID_AVAILABLE:
@@ -131,6 +183,13 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
     if not AUTO_TRANSLATE_ENABLED:
         return text, None
 
+    # Do not translate English input (detected or heuristic)
+    try:
+        if _is_english_text(text, detected_lang):
+            return text, None
+    except Exception:
+        pass
+
     # Provider selection order with legacy normalization
     raw_provider = (TRANSLATION_PROVIDER or 'auto').lower()
     if raw_provider in {'deepl', 'deep_l', 'deep'}:
@@ -157,25 +216,8 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
         return mapping.get(s)
 
     def _looks_english(output: str) -> bool:
-        if not output:
-            return False
-        letters = [ch for ch in output if ch.isalpha()]
-        if not letters:
-            return False
-        # Consider English if most letters are Latin (including diacritics)
-        latin_like = 0
-        cyr = 0
-        han_kana = 0
-        for ch in letters:
-            name = unicodedata.name(ch, '')
-            if ('LATIN' in name) or ('a' <= ch.lower() <= 'z'):
-                latin_like += 1
-            elif ('CYRILLIC' in name) or ('а' <= ch.lower() <= 'я') or (ch in 'ёЁ'):
-                cyr += 1
-            elif ('CJK UNIFIED' in name) or ('HIRAGANA' in name) or ('KATAKANA' in name):
-                han_kana += 1
-        # English if majority is Latin-like and minimal Cyrillic/Han
-        return latin_like >= max(1, int(0.6 * len(letters))) and (cyr + han_kana) <= int(0.1 * len(letters))
+        # Reuse shared heuristic
+        return _looks_english_text(output)
 
     def _polish_english_for_ru(output: str) -> str:
         """Lightweight polishing for common RU→EN artifacts to improve readability.
@@ -508,6 +550,13 @@ async def maybe_augment_with_english(original_text: str) -> str:
     # If already English or unknown, do not change
     if not lang or lang == 'en':
         return original_text
+
+    # Safety: if it looks like English despite detector misclass, keep as is
+    try:
+        if _is_english_text(original_text, lang):
+            return original_text
+    except Exception:
+        pass
 
     # Only translate for requested languages list unless AUTO_TRANSLATE_ALL is enabled
     if not AUTO_TRANSLATE_ALL:

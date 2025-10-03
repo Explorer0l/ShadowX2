@@ -7,8 +7,16 @@ import asyncio
 import logging
 import random
 from datetime import datetime, timedelta
-from database import add_message_to_queue, get_messages_to_send, mark_message_as_sent, get_last_scheduled_time
-from config import MESSAGE_QUEUE_MIN_INTERVAL, MESSAGE_QUEUE_MAX_INTERVAL, UNIVERSITIES
+from database import (
+    add_message_to_queue,
+    get_messages_to_send,
+    mark_message_as_sent,
+    get_last_scheduled_time,
+    get_message,
+    count_user_recent_scheduled,
+    get_user_recent_scheduled_times,
+)
+from config import MESSAGE_QUEUE_MIN_INTERVAL, MESSAGE_QUEUE_MAX_INTERVAL, UNIVERSITIES, USER_MAX_PER_HOUR, USER_RATE_WINDOW_SECONDS
 from utils.translate import maybe_augment_with_english
 from aiogram.exceptions import TelegramRetryAfter, TelegramServerError, TelegramNetworkError, TelegramBadRequest
 
@@ -37,16 +45,71 @@ class MessageQueue:
             self.task = None
     
     def schedule_message(self, message_id):
-        """Schedule a message to be sent later, spaced by configured interval range."""
+        """Schedule a message to be sent as soon as allowed by per-user hourly limit.
+        Removes global delay. If the user reached the hourly cap, schedule at the
+        earliest allowed time when a slot opens (rolling window of 1 hour).
+        """
         now = datetime.now()
-        last_time = get_last_scheduled_time()
-        # Choose random interval in configured range
-        spacing = random.randint(MESSAGE_QUEUE_MIN_INTERVAL, MESSAGE_QUEUE_MAX_INTERVAL)
-        if last_time and last_time > now:
-            next_time = last_time + timedelta(seconds=spacing)
-        else:
-            next_time = now + timedelta(seconds=spacing)
-        scheduled_time = next_time.strftime('%Y-%m-%d %H:%M:%S')
+        window_seconds = int(USER_RATE_WINDOW_SECONDS) if int(USER_RATE_WINDOW_SECONDS) > 0 else 3600
+        try:
+            msg_row = get_message(int(message_id))
+        except Exception:
+            msg_row = None
+        # Default: schedule now if can't resolve user
+        scheduled_dt = now
+        if msg_row:
+            try:
+                user_id = int(msg_row[1])
+            except Exception:
+                user_id = None
+            if USER_MAX_PER_HOUR and USER_MAX_PER_HOUR > 0 and user_id:
+                try:
+                    recent_count = count_user_recent_scheduled(user_id, window_seconds=window_seconds)
+                    if recent_count >= int(USER_MAX_PER_HOUR):
+                        # Compute earliest slot: oldest scheduled within window + window_seconds + 1s
+                        times = get_user_recent_scheduled_times(user_id, window_seconds=window_seconds)
+                        if times:
+                            oldest = min(times)
+                            candidate = oldest + timedelta(seconds=window_seconds + 1)
+                            if candidate > scheduled_dt:
+                                scheduled_dt = candidate
+                        # Inform user about the wait time in English
+                        try:
+                            remaining = int(max(1, (scheduled_dt - now).total_seconds()))
+                            hours, rem = divmod(remaining, 3600)
+                            minutes, seconds = divmod(rem, 60)
+                            parts = []
+                            if hours:
+                                parts.append(f"{hours}h")
+                            if minutes:
+                                parts.append(f"{minutes}m")
+                            # Always show seconds to be precise
+                            parts.append(f"{seconds}s")
+                            wait_str = " ".join(parts)
+                            note = (
+                                "You have reached your hourly posting limit.\n"
+                                f"Your message has been scheduled and will be posted in {wait_str}."
+                            )
+                            # Send as a best-effort notification; ignore failures
+                            try:
+                                import asyncio as _asyncio
+                                _asyncio.create_task(self.bot.send_message(chat_id=user_id, text=note))
+                            except Exception:
+                                try:
+                                    import asyncio as _asyncio
+                                    _asyncio.get_event_loop().create_task(self.bot.send_message(chat_id=user_id, text=note))
+                                except Exception:
+                                    # Last resort: skip silently
+                                    pass
+                        except Exception:
+                            pass
+                except Exception:
+                    # On any error, fall back to scheduling now
+                    pass
+        # Always ensure we don't schedule in the past
+        if scheduled_dt < now:
+            scheduled_dt = now
+        scheduled_time = scheduled_dt.strftime('%Y-%m-%d %H:%M:%S')
         add_message_to_queue(message_id, scheduled_time)
     
     async def process_queue(self):
@@ -89,21 +152,61 @@ class MessageQueue:
                         # Format the final message
                         if media_type:
                             # For media posts
-                            if send_content:
-                                final_caption = f"{send_content}\n№{message_number}"
-                            else:
-                                final_caption = f"№{message_number}"
-                            
-                            # Add hashtags if needed
-                            if hashtag:
-                                final_caption = f"{hashtag}\n{final_caption}\n{hashtag}"
-                            
-                            if media_type == 'photo':
+                            if media_type == 'album':
+                                # Parse album items (only photo/video are supported in albums)
+                                try:
+                                    from aiogram.types import InputMediaPhoto, InputMediaVideo
+                                    items = []
+                                    for token in (file_id or '').split('||'):
+                                        if not token:
+                                            continue
+                                        try:
+                                            t, mid = token.split(':', 1)
+                                        except ValueError:
+                                            continue
+                                        if t == 'photo':
+                                            items.append(('photo', mid))
+                                        elif t == 'video':
+                                            items.append(('video', mid))
+                                    # Build caption
+                                    if send_content:
+                                        final_caption = f"{send_content}\n№{message_number}"
+                                    else:
+                                        final_caption = f"№{message_number}"
+                                    if hashtag:
+                                        final_caption = f"{hashtag}\n{final_caption}\n{hashtag}"
+                                    media_group = []
+                                    for idx, (t, mid) in enumerate(items):
+                                        cap = final_caption if idx == 0 else None
+                                        if t == 'photo':
+                                            media_group.append(InputMediaPhoto(media=mid, caption=cap))
+                                        elif t == 'video':
+                                            media_group.append(InputMediaVideo(media=mid, caption=cap))
+                                    if media_group:
+                                        try:
+                                            await self.bot.send_media_group(chat_id=channel, media=media_group)
+                                        except TelegramRetryAfter as e:
+                                            await asyncio.sleep(int(getattr(e, 'retry_after', 5)) + 1)
+                                            continue
+                                        except (TelegramServerError, TelegramNetworkError, asyncio.TimeoutError):
+                                            logging.warning("Transient error sending album; retrying soon", exc_info=True)
+                                            await asyncio.sleep(2)
+                                            continue
+                                    else:
+                                        # Fallback: if no valid items, skip
+                                        logging.warning(f"Album message {message_id} has no valid items")
+                                        mark_message_as_sent(queue_id)
+                                        continue
+                                except Exception:
+                                    logging.exception("Error preparing album; skipping")
+                                    mark_message_as_sent(queue_id)
+                                    continue
+                            elif media_type == 'photo':
                                 try:
                                     await self.bot.send_photo(
                                         chat_id=channel,
                                         photo=file_id,
-                                        caption=final_caption
+                                        caption=(f"{hashtag}\n{send_content}\n№{message_number}\n{hashtag}" if (hashtag and send_content) else (f"{send_content}\n№{message_number}" if send_content else (f"{hashtag}\n№{message_number}\n{hashtag}" if hashtag else f"№{message_number}")))
                                     )
                                 except TelegramRetryAfter as e:
                                     await asyncio.sleep(int(getattr(e, 'retry_after', 5)) + 1)
@@ -117,7 +220,7 @@ class MessageQueue:
                                     await self.bot.send_video(
                                         chat_id=channel,
                                         video=file_id,
-                                        caption=final_caption
+                                        caption=(f"{hashtag}\n{send_content}\n№{message_number}\n{hashtag}" if (hashtag and send_content) else (f"{send_content}\n№{message_number}" if send_content else (f"{hashtag}\n№{message_number}\n{hashtag}" if hashtag else f"№{message_number}")))
                                     )
                                 except TelegramRetryAfter as e:
                                     await asyncio.sleep(int(getattr(e, 'retry_after', 5)) + 1)
@@ -131,7 +234,7 @@ class MessageQueue:
                                     await self.bot.send_audio(
                                         chat_id=channel,
                                         audio=file_id,
-                                        caption=final_caption or None
+                                        caption=((f"{hashtag}\n{send_content}\n№{message_number}\n{hashtag}" if hashtag else f"{send_content}\n№{message_number}") if send_content else None)
                                     )
                                 except TelegramRetryAfter as e:
                                     await asyncio.sleep(int(getattr(e, 'retry_after', 5)) + 1)
@@ -145,7 +248,7 @@ class MessageQueue:
                                     await self.bot.send_voice(
                                         chat_id=channel,
                                         voice=file_id,
-                                        caption=final_caption or None
+                                        caption=((f"{hashtag}\n{send_content}\n№{message_number}\n{hashtag}" if hashtag else f"{send_content}\n№{message_number}") if send_content else None)
                                     )
                                 except TelegramRetryAfter as e:
                                     await asyncio.sleep(int(getattr(e, 'retry_after', 5)) + 1)
@@ -230,6 +333,13 @@ class MessageQueue:
                                 await asyncio.sleep(2)
                                 continue
                         
+                        # Persist published mapping (university, number -> original user/message)
+                        try:
+                            from database import save_published_mapping
+                            save_published_mapping(university, message_number, message_id, user_id)
+                        except Exception:
+                            logging.debug("Failed to save published mapping", exc_info=True)
+
                         # Mark as sent
                         mark_message_as_sent(queue_id)
                         
@@ -250,8 +360,8 @@ class MessageQueue:
                     except Exception:
                         logging.exception(f"Error processing queued message {message_id}")
                 
-                # Pace checking lightly; sending itself is paced by scheduled_time
-                await asyncio.sleep(1)
+                # If nothing to send, sleep a bit longer to reduce CPU
+                await asyncio.sleep(0 if messages else 2)
             
             except Exception:
                 logging.exception("Queue processing error")

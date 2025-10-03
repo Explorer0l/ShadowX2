@@ -183,6 +183,11 @@ SPAM_HANDLE_WHITELIST = _parse_str_list(os.getenv("SPAM_HANDLE_WHITELIST", ""))
 # Minimal words requirement for user messages/captions
 MIN_MESSAGE_WORDS = int(os.getenv("MIN_MESSAGE_WORDS", "4"))
 
+# Per-user publishing rate limit (messages per hour). 0 disables the limit.
+USER_MAX_PER_HOUR = int(os.getenv("USER_MAX_PER_HOUR", "20"))
+# Rolling rate window in seconds for per-user limit (default 10 minutes)
+USER_RATE_WINDOW_SECONDS = int(os.getenv("USER_RATE_WINDOW_SECONDS", "600"))
+
 # Database settings
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Allow overriding DB path via env for containerized/hosted deployments

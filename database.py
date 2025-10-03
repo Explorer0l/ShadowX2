@@ -113,6 +113,18 @@ def init_db():
                 counter INTEGER DEFAULT 1
             )''')
 
+            # Mapping of published channel number (per university) to original message/user
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS published_map (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                university TEXT,
+                number INTEGER,
+                message_id INTEGER,
+                user_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(university, number)
+            )''')
+
             # Banned users table
             cursor.execute('''
             CREATE TABLE IF NOT EXISTS banned_users (
@@ -147,6 +159,16 @@ def init_db():
                     cursor.execute("ALTER TABLE moderators ADD COLUMN name TEXT")
             except sqlite3.Error as e:
                 logging.warning(f"Moderators table migration check failed: {e}")
+
+            # Rate limit reset table
+            try:
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS rate_limit_resets (
+                    user_id INTEGER PRIMARY KEY,
+                    reset_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )''')
+            except sqlite3.Error as e:
+                logging.warning(f"Rate limit reset table creation warning: {e}")
             
             # Indexes to speed up common queries
             try:
@@ -156,6 +178,9 @@ def init_db():
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_queue_status_time ON message_queue(status, scheduled_time)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_queue_message ON message_queue(message_id)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_unichanges_status ON university_changes(status)')
+                # Fast lookups for anon-reply mapping by (number) or (university, number)
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_published_number ON published_map(number)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_published_university_number ON published_map(university, number)')
             except sqlite3.Error as e:
                 logging.warning(f"Index creation warning: {e}")
 
@@ -566,9 +591,9 @@ def get_recent_message_texts(limit: int = 200) -> list[str]:
             cursor = conn.cursor()
             cursor.execute(
                 '''
-                SELECT COALESCE(filtered_content, content) AS text
+                SELECT COALESCE(filtered_content, content) AS txt
                 FROM messages
-                WHERE text IS NOT NULL AND TRIM(text) <> ''
+                WHERE txt IS NOT NULL AND TRIM(txt) <> ''
                   AND status IN ('approved', 'pending')
                 ORDER BY message_id DESC
                 LIMIT ?
@@ -589,6 +614,36 @@ def mark_message_as_sent(queue_id):
             conn.commit()
     except sqlite3.Error as e:
         logging.error(f"Error marking message as sent: {e}")
+
+def save_published_mapping(university: str, number: int, message_id: int, user_id: int) -> bool:
+    """Persist mapping from (university, number) to original message/user."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT OR REPLACE INTO published_map (university, number, message_id, user_id) VALUES (?, ?, ?, ?)',
+                (university, int(number), int(message_id), int(user_id))
+            )
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        logging.error(f"Error saving published mapping: {e}")
+        return False
+
+def get_author_by_published_number(number: int, university: str | None = None):
+    """Return (user_id, message_id) by published number, optionally constrained by university."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            if university:
+                cursor.execute('SELECT user_id, message_id FROM published_map WHERE university = ? AND number = ?', (university, int(number)))
+            else:
+                cursor.execute('SELECT user_id, message_id FROM published_map WHERE number = ? ORDER BY id DESC LIMIT 1', (int(number),))
+            row = cursor.fetchone()
+            return (row[0], row[1]) if row else (None, None)
+    except sqlite3.Error as e:
+        logging.error(f"Error fetching author by number: {e}")
+        return (None, None)
 
 def clear_pending_queue():
     """Delete all pending items from message_queue table"""
@@ -613,6 +668,87 @@ def clear_pending_messages():
     except sqlite3.Error as e:
         logging.error(f"Error clearing pending messages: {e}")
         return 0
+
+# ---- Rate limiting helpers ----
+def get_user_recent_scheduled_times(user_id: int, window_seconds: int = 3600) -> list[datetime]:
+    """Return list of scheduled_time datetimes for a user's queued messages within the window.
+    Includes both pending and already sent queue entries.
+    """
+    try:
+        threshold = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            # Compute threshold as NOW - window_seconds in SQL for portability
+            cursor.execute(
+                '''
+                SELECT mq.scheduled_time
+                FROM message_queue mq
+                JOIN messages m ON mq.message_id = m.message_id
+                WHERE m.user_id = ?
+                  AND mq.status IN ('pending','sent')
+                  AND mq.scheduled_time >= datetime(
+                        COALESCE((SELECT reset_at FROM rate_limit_resets WHERE user_id = ?), ?),
+                        ?
+                  )
+                ORDER BY mq.scheduled_time ASC
+                ''',
+                (int(user_id), int(user_id), threshold, f'-{int(window_seconds)} seconds')
+            )
+            rows = cursor.fetchall()
+            times: list[datetime] = []
+            for (ts,) in rows:
+                try:
+                    times.append(datetime.strptime(ts, '%Y-%m-%d %H:%M:%S'))
+                except Exception:
+                    continue
+            return times
+    except sqlite3.Error as e:
+        logging.error(f"Error getting recent scheduled times for user {user_id}: {e}")
+        return []
+
+def count_user_recent_scheduled(user_id: int, window_seconds: int = 3600) -> int:
+    """Return count of a user's messages scheduled within the last window_seconds.
+    Includes both pending and sent queue entries.
+    """
+    try:
+        threshold = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                SELECT COUNT(1)
+                FROM message_queue mq
+                JOIN messages m ON mq.message_id = m.message_id
+                WHERE m.user_id = ?
+                  AND mq.status IN ('pending','sent')
+                  AND mq.scheduled_time >= datetime(
+                        COALESCE((SELECT reset_at FROM rate_limit_resets WHERE user_id = ?), ?),
+                        ?
+                  )
+                ''',
+                (int(user_id), int(user_id), threshold, f'-{int(window_seconds)} seconds')
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+    except sqlite3.Error as e:
+        logging.error(f"Error counting recent scheduled for user {user_id}: {e}")
+        return 0
+
+def reset_user_rate_limit(user_id: int) -> bool:
+    """Set/reset the per-user rate limit window anchor to now."""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO rate_limit_resets (user_id, reset_at) VALUES (?, CURRENT_TIMESTAMP)\n'
+                'ON CONFLICT(user_id) DO UPDATE SET reset_at = excluded.reset_at',
+                (int(user_id),)
+            )
+            conn.commit()
+            return True
+    except sqlite3.Error as e:
+        logging.error(f"Error resetting rate limit for user {user_id}: {e}")
+        return False
 
 # Ideas operations
 def add_idea(user_id: int, content: str | None = None, media_type: str | None = None, file_id: str | None = None) -> int | None:

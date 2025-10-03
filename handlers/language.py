@@ -118,7 +118,10 @@ TEXTS = {
         "language_changed": "✅ Language set to English",
         "start_with_start": "Please start with /start",
         "university_change_approved": "✅ University change request approved. Choose a new university:",
-        "university_change_rejected": "❌ University change request rejected."
+        "university_change_rejected": "❌ University change request rejected.",
+        "result": {
+            "queue_empty": "📭 The moderation queue is empty."
+        }
     }
 }
 

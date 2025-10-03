@@ -1,0 +1,41 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+*.db
+*.log
+*.tmp
+*.swp
+
+# VCS
+.git
+.gitignore
+
+# Python envs
+.env
+.venv
+venv/
+ENV/
+
+# Byte-compiled / optimized / DLL files
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+
+# Local data and caches
+logs/
+cache/
+app/cache/
+/app/cache/
+
+# Model/cache directories (mounted as volumes in docker-compose)
+/app/cache/hf/
+/app/cache/torch/
+
+# Node/npm (if present)
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db

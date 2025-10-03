@@ -4,6 +4,7 @@ Handles photo and video messages
 """
 
 from aiogram import types, F
+import asyncio
 from database import get_user, add_message_to_db, is_banned
 from handlers.language import get_text, get_user_keyboard, get_after_message_keyboard, get_back_keyboard
 from handlers.moderation import get_admin_decision_keyboard
@@ -15,6 +16,9 @@ from utils.filters import contains_ad_words, contains_banned_words, contains_ban
 
 async def register_media_handlers(dp, bot):
     """Register media-related handlers"""
+    # Buffer for incoming media groups (albums) keyed by media_group_id
+    if not hasattr(state, 'album_buffers'):
+        state.album_buffers = {}
     
     @dp.message(F.content_type.in_({'photo', 'video', 'audio', 'voice', 'video_note'}))
     async def handle_media_message(message: types.Message):
@@ -36,6 +40,188 @@ async def register_media_handlers(dp, bot):
             user = get_user(user_id)
         
         language = user[3] if user[3] else 'en'
+
+        # --- Handle Telegram media groups (albums) ---
+        if getattr(message, 'media_group_id', None):
+            group_id = message.media_group_id
+            buf = state.album_buffers.get(group_id)
+            if not buf:
+                buf = {
+                    'user_id': user_id,
+                    'university': user[2],
+                    'message_type': state.user_data.get(user_id, {}).get('message_type'),
+                    'items': [],  # list of dicts: {type, file_id}
+                    'caption': '',
+                    'language': language,
+                    'timer': None,
+                }
+                state.album_buffers[group_id] = buf
+            # Append current media item
+            if message.photo:
+                item_type = 'photo'
+                item_id = message.photo[-1].file_id
+            elif message.video:
+                item_type = 'video'
+                item_id = message.video.file_id
+            elif getattr(message, 'video_note', None):
+                item_type = 'video_note'
+                item_id = message.video_note.file_id
+            elif message.audio:
+                item_type = 'audio'
+                item_id = message.audio.file_id
+            else:
+                item_type = 'voice'
+                item_id = message.voice.file_id
+            buf['items'].append({'type': item_type, 'id': item_id})
+            # Capture caption if present (prefer the longest non-empty one)
+            cap = (message.caption or '').strip()
+            if cap and len(cap) > len(buf.get('caption') or ''):
+                buf['caption'] = cap
+            # Debounce finalize
+            async def _finalize_album(gid: str):
+                await asyncio.sleep(1.1)
+                b = state.album_buffers.get(gid)
+                if not b:
+                    return
+                # Safety: require user to have selected message_type
+                if not b.get('message_type'):
+                    try:
+                        await bot.send_message(b['user_id'], get_text("message_type_first", b['language']))
+                    except Exception:
+                        pass
+                    state.album_buffers.pop(gid, None)
+                    return
+                # Analyze caption
+                from utils.filters import contains_ad_words, contains_spam, filter_profanity, contains_banned_words_async, spam_score
+                caption = b.get('caption') or ''
+                has_ads = contains_ad_words(caption) if caption else False
+                has_profanity = await contains_banned_words_async(caption) if caption else False
+                has_spam = contains_spam(caption) if caption else False
+                filtered_caption = filter_profanity(caption) if has_profanity else caption
+                if has_ads and has_profanity and has_spam:
+                    reason_db = 'Ads + Profanity + Spam'
+                    reason_admin = 'Ad+Profanity+Spam'
+                elif has_ads and has_profanity:
+                    reason_db = 'Ads + Profanity'
+                    reason_admin = 'Ad+Profanity'
+                elif has_ads and has_spam:
+                    s = spam_score(caption)
+                    reason_db = f'Ads + Spam (score={s:.2f})'
+                    reason_admin = f'Ad+Spam ({s:.2f})'
+                elif has_profanity and has_spam:
+                    s = spam_score(caption)
+                    reason_db = f'Profanity + Spam (score={s:.2f})'
+                    reason_admin = f'Profanity+Spam ({s:.2f})'
+                elif has_ads:
+                    reason_db = 'Media requires review (possible ad)'
+                    reason_admin = 'Possible ad'
+                elif has_spam:
+                    s = spam_score(caption)
+                    reason_db = f'Media requires review (spam score={s:.2f})'
+                    reason_admin = f'Possible spam ({s:.2f})'
+                elif has_profanity:
+                    reason_db = 'Media requires review (profanity)'
+                    reason_admin = 'Profanity detected'
+                else:
+                    reason_db = 'Media requires review'
+                    reason_admin = 'Media review'
+                # Serialize album file ids as type:id joined by ||
+                serialized = '||'.join(f"{it['type']}:{it['id']}" for it in b['items'])
+                from database import add_message_to_db
+                message_id = add_message_to_db(
+                    user_id=b['user_id'],
+                    university=b['university'],
+                    message_type=b['message_type'],
+                    content=caption,
+                    filtered_content=filtered_caption,
+                    media_type='album',
+                    file_id=serialized,
+                    status='pending',
+                    reason=reason_db
+                )
+                if message_id:
+                    # Add to moderation queue
+                    state.moderation_queue[message_id] = {
+                        'user_id': b['user_id'],
+                        'media_type': 'album',
+                        'file_id': serialized,
+                        'caption': caption,
+                        'university': b['university'],
+                        'message_type': b['message_type'],
+                        'language': b['language']
+                    }
+                    # Send media group to moderators/admins then a summary with buttons
+                    from database import get_moderators
+                    recipients = set(get_moderators() or [])
+                    recipients.update(ADMIN_IDS)
+                    media = []
+                    try:
+                        from aiogram.types import InputMediaPhoto, InputMediaVideo
+                        for idx, it in enumerate(b['items']):
+                            cap_to_use = filtered_caption if (idx == 0 and filtered_caption) else None
+                            if it['type'] == 'photo':
+                                media.append(InputMediaPhoto(media=it['id'], caption=cap_to_use))
+                            elif it['type'] == 'video':
+                                media.append(InputMediaVideo(media=it['id'], caption=cap_to_use))
+                            # Skip audio/voice/video_note in album groups here
+                    except Exception:
+                        media = []
+                    for recipient_id in recipients:
+                        try:
+                            if media:
+                                await bot.send_media_group(recipient_id, media=media)
+                            # Localize buttons
+                            try:
+                                admin_user = get_user(recipient_id)
+                                admin_language = admin_user[3] if admin_user and admin_user[3] else 'en'
+                            except Exception:
+                                admin_language = 'en'
+                            await bot.send_message(
+                                recipient_id,
+                                (
+                                    f"⚠️ Media album for moderation (ID: {message_id})\n\n"
+                                    f"🏫 University: {b['university']}\n"
+                                    f"📌 Type: {b['message_type']}\n"
+                                    f"🔎 Reason: {reason_admin}\n\n"
+                                    f"📝 Caption:\n{caption}\n\n"
+                                    f"🧹 Filtered caption:\n{filtered_caption}"
+                                ),
+                                reply_markup=get_admin_decision_keyboard(message_id, admin_language)
+                            )
+                        except Exception:
+                            pass
+                    # Notify user
+                    try:
+                        from database import is_moderator as _is_moderator
+                        is_mod = _is_moderator(b['user_id'])
+                    except Exception:
+                        is_mod = False
+                    try:
+                        await bot.send_message(
+                            b['user_id'],
+                            get_text("media_moderation", b['language']),
+                            reply_markup=get_user_keyboard(b['user_id'], b['language'], is_admin=is_admin(b['user_id']), is_moderator=is_mod)
+                        )
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        await bot.send_message(
+                            b['user_id'],
+                            f"{get_text('error', b['language'])} {get_text('when_processing_media', b['language'])}",
+                            reply_markup=get_user_keyboard(b['user_id'], b['language'])
+                        )
+                    except Exception:
+                        pass
+                # Clear buffer
+                state.album_buffers.pop(gid, None)
+
+            # Restart debounce timer
+            t = buf.get('timer')
+            if t and not t.cancelled():
+                t.cancel()
+            buf['timer'] = asyncio.create_task(_finalize_album(group_id))
+            return
 
         # Idea media path: if awaiting_idea, send only to admin and store
         if user_id in user_data and user_data[user_id].get('awaiting_idea'):

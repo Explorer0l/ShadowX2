@@ -1,9 +1,9 @@
+# syntax=docker/dockerfile:1.6
 # Multi-stage build for optimized production image
 FROM python:3.12-slim as builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
@@ -16,9 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies with optimized versions
-RUN pip install --upgrade pip wheel setuptools && \
-    pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies with BuildKit cache for pip
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip wheel setuptools && \
+    pip install -r requirements.txt
 
 # Production stage
 FROM python:3.12-slim as production

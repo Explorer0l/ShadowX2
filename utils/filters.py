@@ -806,15 +806,43 @@ async def contains_banned_words_async(text):
     return False
 
 def contains_ad_words(text):
-    """Check if text contains advertising-related words (respects whitelist)."""
+    """Check if text contains advertising-related words (respects whitelist) with relaxed logic for simple classifieds and benign words.
+    We avoid flagging simple intent-only phrases like "продаю", "куплю", "продам", and benign logistics/purchase words like
+    "доставка", "заказ", "заказал", "купил" when there are no links/handles/phones/prices/discounts/CTA.
+    """
     if not text: return False
     text_lower = text.lower()
     # If only whitelisted domains/handles are present and no other ad signals, return False
     w_domains, w_handles = _is_whitelisted_domain_or_handle(text_lower)
-    has_ad_regex = any(rx.search(text_lower) for rx in _AD_REGEXES)
+
+    has_url = bool(_REGEXES['url'].search(text_lower))
+    has_handle = bool(_REGEXES['handle'].search(text_lower))
+    has_phone = bool(_REGEXES['phone'].search(text_lower))
     has_domain = any(rx.search(text) for rx in _DOMAIN_REGEXES)
+    has_ad_regex = any(rx.search(text_lower) for rx in _AD_REGEXES)
     has_words = any(word in text_lower for word in AD_RELATED_WORDS)
-    if (has_domain or has_ad_regex) and not has_words:
+
+    # Price and discount (explicit patterns)
+    try:
+        _price_rx = re.compile(r"\b\d{2,}[\s\xa0]?(?:сомони|сом|somoni|som|сум|uzs|₽|руб\.?|rub|usd|\$|€|тенге|тг|kzt|₸)\b", re.IGNORECASE)
+        _discount_rx = re.compile(r"\b(?:скидк\w*|акци\w*|промокод)\b\s*\d{1,2}%?", re.IGNORECASE)
+    except Exception:
+        _price_rx = _discount_rx = None
+    has_price = bool(_price_rx.search(text_lower)) if _price_rx else False
+    has_discount = bool(_discount_rx.search(text_lower)) if _discount_rx else False
+    cta_hits = sum(1 for w in _CTA_WORDS if w in text_lower)
+
+    strong_ad = has_url or has_domain or has_handle or has_phone or has_price or has_discount or (cta_hits > 0)
+
+    # Relaxation: treat bare intent words and benign shopping/logistics words as non-ads unless combined with strong signals
+    simple_intents = ("продаю", "куплю", "ищу", "продам")
+    benign_stems = ("доставк", "заказ", "заказал", "заказала", "заказано", "купил", "купила", "купили")
+    has_bare_intent = any(w in text_lower for w in simple_intents)
+    has_benign_only = any(stem in text_lower for stem in benign_stems)
+    if (has_bare_intent or has_benign_only) and not strong_ad:
+        has_words = False
+
+    if (has_domain or has_url or has_handle) and not has_words:
         # If all links/handles belong to whitelist, ignore
         if w_domains or w_handles:
             # Check if removing whitelisted tokens eliminates ad signals
@@ -825,7 +853,7 @@ def contains_ad_words(text):
                 clean = clean.replace('@' + h.lstrip('@'), "")
             if not any(rx.search(clean) for rx in _AD_REGEXES) and not any(rx.search(clean) for rx in _DOMAIN_REGEXES):
                 return False
-    return has_ad_regex or has_domain or has_words
+    return has_ad_regex or has_domain or has_words or has_url or has_handle or has_phone or has_price or has_discount
 
 
 def _is_whitelisted_domain_or_handle(text: str) -> tuple[int, int]:

@@ -12,6 +12,7 @@ from utils.filters import contains_banned_words, contains_banned_words_async, co
 from config import ADMIN_ID, ADMIN_IDS, is_admin, UNIVERSITIES
 from utils.queue import MessageQueue
 import state
+import re
 
 async def register_message_handlers(dp, bot):
     """Register message-related handlers"""
@@ -70,6 +71,64 @@ async def register_message_handlers(dp, bot):
             text,
             reply_markup=get_user_keyboard(user_id, language, is_admin=is_admin(user_id), is_moderator=is_mod)
         )
+
+    @dp.message(Command("send_anon_message"))
+    async def cmd_send_anon_message(message: types.Message):
+        """Allow any user to send an anonymous reply to the author of a published post by its number.
+        Usage:
+            /send_anon_message <number> <text>
+        If text is omitted, bot will prompt for it in next message.
+        """
+        user_id = message.from_user.id
+        user = get_user(user_id)
+        language = user[3] if user and user[3] else 'en'
+
+        text = message.text or ''
+        # Parse: command + number + optional text
+        m = re.match(r"^/send_anon_message\s+(\d+)(?:\s+(.+))?$", text.strip(), flags=re.IGNORECASE | re.DOTALL)
+        if not m:
+            await message.answer(
+                "How to use:\n"
+                "1) Find the post number in the channel (e.g., №42).\n"
+                "2) Send: /send_anon_message 42 Your message here\n\n"
+                "Example:\n/send_anon_message 42 Hello! Let's connect."
+            )
+            return
+        post_number = int(m.group(1))
+        reply_text = (m.group(2) or '').strip()
+
+        # Resolve author by number (optionally could use user's university context)
+        try:
+            from database import get_author_by_published_number
+            author_user_id, source_message_id = get_author_by_published_number(post_number)
+        except Exception:
+            author_user_id, source_message_id = (None, None)
+        if not author_user_id:
+            await message.answer("Post not found or mapping not available yet.")
+            return
+
+        if not reply_text:
+            # Ask for message in next step
+            state.user_data[user_id] = state.user_data.get(user_id, {})
+            st = state.user_data[user_id]
+            st['awaiting_anon_reply'] = True
+            st['anon_reply_target'] = {
+                'author_id': author_user_id,
+                'post_number': post_number,
+                'source_message_id': source_message_id
+            }
+            await message.answer(
+                "Please send your anonymous reply text now.\n"
+                "Tip: Be respectful and avoid sharing personal data."
+            )
+            return
+
+        # Send immediately
+        try:
+            await message.bot.send_message(author_user_id, f"📩 Anonymous reply to your post №{post_number}:\n\n{reply_text}")
+            await message.answer("✅ Sent to the author.")
+        except Exception:
+            await message.answer("Failed to deliver message to the author.")
     
     # Disclaimer confirmation flow removed; users go straight to main menu
     
@@ -170,11 +229,65 @@ async def register_message_handlers(dp, bot):
         
         # Language selection UI is removed; no need to handle flag buttons
         
-        # Skip admin command buttons
+        # Skip admin command buttons, but if it's Check queue and moderation handler didn't catch it,
+        # provide a graceful empty-queue response here for admins/moderators.
         admin_commands = [
             get_text("admin_commands.check_queue", "en")
         ]
         if message.text in admin_commands:
+            try:
+                from database import is_moderator as _is_moderator, get_user as _get_user
+                # Only allow admins/moderators
+                if not (is_admin(message.from_user.id) or _is_moderator(message.from_user.id)):
+                    return
+                # If moderation handler wasn't triggered and queue is empty, answer here
+                try:
+                    from database import get_pending_messages as _get_pending
+                    pending = _get_pending() or []
+                except Exception:
+                    pending = []
+                if not pending:
+                    try:
+                        u = _get_user(message.from_user.id)
+                        lang = u[3] if u and u[3] else 'en'
+                    except Exception:
+                        lang = 'en'
+                    await message.answer(get_text('result.queue_empty', lang))
+                # Otherwise do nothing and let the user press again or rely on moderation handler
+            except Exception:
+                pass
+            return
+
+        # Handle idea text if awaiting
+        # Handle awaiting anonymous reply composition flow
+        if user_id in user_data and user_data[user_id].get('awaiting_anon_reply'):
+            payload = user_data[user_id].get('anon_reply_target') or {}
+            target_id = payload.get('author_id')
+            post_number = payload.get('post_number')
+            if not target_id:
+                # Reset state gracefully
+                user_data[user_id]['awaiting_anon_reply'] = False
+                user_data[user_id].pop('anon_reply_target', None)
+                await message.answer("Session expired. Use /send_anon_message <number> again.")
+                return
+            reply_text = message.text.strip()
+            try:
+                await message.bot.send_message(target_id, f"📩 Anonymous reply to your post №{post_number}:\n\n{reply_text}")
+                await message.answer("✅ Sent to the author.")
+            except Exception:
+                await message.answer("Failed to deliver message to the author.")
+            # Clear anon reply state and fall through to main menu
+            user_data[user_id]['awaiting_anon_reply'] = False
+            user_data[user_id].pop('anon_reply_target', None)
+            try:
+                from database import is_moderator as _is_moderator
+                is_mod = _is_moderator(user_id)
+            except Exception:
+                is_mod = False
+            await message.answer(
+                get_text("main_menu", language),
+                reply_markup=get_user_keyboard(user_id, language, is_admin=is_admin(user_id), is_moderator=is_mod)
+            )
             return
 
         # Handle idea text if awaiting

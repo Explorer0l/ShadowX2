@@ -8,7 +8,7 @@ import os, sys
 import logging
 import aiohttp
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats, BotCommandScopeAllChatAdministrators
 from config import TOKEN
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramUnauthorizedError
@@ -40,11 +40,24 @@ async def on_startup():
     init_db()
     # Register bot commands (English-only)
     try:
-        await bot.set_my_commands([
+        commands = [
             BotCommand(command="start", description="Start"),
+            BotCommand(command="send_anon_message", description="Send anonymous reply to a post"),
             BotCommand(command="help", description="Help"),
-            BotCommand(command="confession", description="Send anonymous confession"),
-        ])
+        ]
+        # Apply commands across common scopes so clients see updates
+        scopes = [
+            BotCommandScopeDefault(),
+            BotCommandScopeAllPrivateChats(),
+            BotCommandScopeAllGroupChats(),
+            BotCommandScopeAllChatAdministrators(),
+        ]
+        for scope in scopes:
+            try:
+                await bot.delete_my_commands(scope=scope)
+            except Exception:
+                pass
+            await bot.set_my_commands(commands, scope=scope)
     except Exception:
         logging.exception("Failed to set bot commands")
     logging.info("Bot has been started!")

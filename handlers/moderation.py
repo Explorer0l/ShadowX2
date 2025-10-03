@@ -84,11 +84,19 @@ def get_university_change_decision_keyboard(request_id):
 async def register_moderation_handlers(dp, bot):
     """Register moderation-related handlers"""
     
-    @dp.message(lambda message: message.text in [
-        get_text("admin_commands.check_queue", "en"),
-        # Allow via moderator panel as well (same label)
-        get_text("moderator_commands.check_queue", "en"),
-    ])
+    # Robust trigger matcher for "Check queue" to handle emoji/case/spacing variants
+    def _matches_check_queue(text: str) -> bool:
+        if not isinstance(text, str):
+            return False
+        lowered = text.lower()
+        if 'check queue' in lowered:
+            return True
+        # Remove non-alphanumeric except spaces and normalize spaces
+        normalized = ''.join(ch for ch in lowered if ch.isalnum() or ch.isspace())
+        normalized = ' '.join(normalized.split())
+        return normalized in ("check queue", "checkqueue")
+
+    @dp.message(lambda message: _matches_check_queue(getattr(message, 'text', None)))
     async def show_moderation_queue_handler(message: types.Message):
         # Admins and moderators can view the queue
         try:
@@ -108,7 +116,15 @@ async def register_moderation_handlers(dp, bot):
                 lang = u[3] if u and u[3] else 'en'
             except Exception:
                 lang = 'ru'
-            await message.answer(get_text('result.queue_empty', lang))
+            try:
+                empty_text = get_text('result.queue_empty', lang)
+            except Exception:
+                empty_text = 'The moderation queue is empty.'
+            try:
+                await message.answer(empty_text)
+            except Exception:
+                # Fallback to a very short static message
+                await message.answer('Queue is empty')
             return
         
         # Determine admin language for localized buttons
@@ -162,21 +178,67 @@ async def register_moderation_handlers(dp, bot):
                         f"ID: {message_id}\nUniversity: {university}\nType: {message_type}\nStatus: {status}",
                         reply_markup=get_admin_decision_keyboard(message_id, admin_language)
                     )
+                elif media_type == "album":
+                    # Render album: try to send media group preview, then a summary with buttons
+                    try:
+                        parts = (file_id or '').split('||') if file_id else []
+                        from aiogram.types import InputMediaPhoto, InputMediaVideo
+                        group = []
+                        cap_full = (filtered_content or content or '')
+                        # Telegram caption limit is 1024; keep margin
+                        cap_to_use = (cap_full[:990] + '…') if cap_full and len(cap_full) > 1000 else cap_full
+                        for idx, token in enumerate(parts):
+                            if not token:
+                                continue
+                            try:
+                                t, mid = token.split(':', 1)
+                            except ValueError:
+                                continue
+                            cap = cap_to_use if idx == 0 else None
+                            if t == 'photo':
+                                group.append(InputMediaPhoto(media=mid, caption=cap))
+                            elif t == 'video':
+                                group.append(InputMediaVideo(media=mid, caption=cap))
+                        if group:
+                            await bot.send_media_group(message.chat.id, media=group)
+                    except Exception:
+                        pass
+                    await bot.send_message(
+                        message.chat.id,
+                        f"ID: {message_id}\nUniversity: {university}\nType: {message_type}\nStatus: {status}",
+                        reply_markup=get_admin_decision_keyboard(message_id, admin_language)
+                    )
             else:  # Text message
                 original = content
                 filtered = filtered_content if filtered_content else content
                 
                 # Show both versions if different
-                if filtered != original:
-                    text = f"ID: {message_id}\nUniversity: {university}\nType: {message_type}\nStatus: {status}\n\n"
-                    text += f"Original:\n{original}\n\nFiltered:\n{filtered}"
-                else:
-                    text = f"ID: {message_id}\nUniversity: {university}\nType: {message_type}\nStatus: {status}\n\nText: {content}"
-                
-                await message.answer(
-                    text,
-                    reply_markup=get_admin_decision_keyboard(message_id, admin_language)
-                )
+                try:
+                    def _clip(s: str, limit: int = 1800) -> str:
+                        if not s:
+                            return ''
+                        s = s.strip()
+                        return (s[:limit - 1] + '…') if len(s) > limit else s
+                    header = f"ID: {message_id}\nUniversity: {university}\nType: {message_type}\nStatus: {status}\n\n"
+                    if filtered != original:
+                        body = f"Original:\n{_clip(original)}\n\nFiltered:\n{_clip(filtered)}"
+                    else:
+                        body = f"Text:\n{_clip(content)}"
+                    text = header + body
+                    # Ensure hard cap under 4096
+                    if len(text) > 4000:
+                        text = text[:3990] + '…'
+                    await message.answer(
+                        text,
+                        reply_markup=get_admin_decision_keyboard(message_id, admin_language)
+                    )
+                except Exception:
+                    # Fallback to minimal metadata message
+                    await message.answer(
+                        f"ID: {message_id}\nUniversity: {university}\nType: {message_type}\nStatus: {status}",
+                        reply_markup=get_admin_decision_keyboard(message_id, admin_language)
+                    )
+
     
     # University change requests UI removed
     
@@ -185,11 +247,6 @@ async def register_moderation_handlers(dp, bot):
         """Process admin decision for message moderation"""
         action, message_id = callback_query.data.split('_')
         message_id = int(message_id)
-        # Answer early to avoid "query is too old" errors if processing takes time
-        try:
-            await callback_query.answer()
-        except Exception:
-            pass
         
         # Get moderation queue from shared state
         moderation_queue = state.moderation_queue
@@ -209,7 +266,11 @@ async def register_moderation_handlers(dp, bot):
             except Exception:
                 current_status = None
             if current_status != 'pending':
-                await callback_query.answer("Message already processed")
+                # Notify clearly that it was already handled
+                try:
+                    await callback_query.answer("This message was already processed.", show_alert=True)
+                except Exception:
+                    pass
                 return
             # Unpack DB row (see database.py messages schema)
             try:
@@ -269,6 +330,23 @@ async def register_moderation_handlers(dp, bot):
             await callback_query.answer("Unsupported action")
             return
         
+        # Atomic-like guard: re-check current status before updating
+        try:
+            db_before = get_message(message_id)
+            if db_before and db_before[8] != 'pending':
+                try:
+                    await callback_query.answer("This message was already processed.", show_alert=True)
+                except Exception:
+                    pass
+                return
+        except Exception:
+            pass
+
+        # Answer early now that we know it's pending (to avoid timeout warnings)
+        try:
+            await callback_query.answer()
+        except Exception:
+            pass
         update_message_status(message_id, new_status)
         
         if action == 'approve':
@@ -357,11 +435,7 @@ async def register_moderation_handlers(dp, bot):
         # Remove from moderation queue
         moderation_queue.pop(message_id, None)
         
-        # Already answered early; ignore errors if trying again
-        try:
-            await callback_query.answer()
-        except Exception:
-            pass
+        # No further callback answer here to avoid duplicate responses
     
     # Panels
     @dp.message(lambda message: message.text in [
@@ -642,6 +716,30 @@ async def register_moderation_handlers(dp, bot):
                 display = name or "-"
                 lines.append(f"{uid} — {display}")
             await message.answer(f"{header}:\n" + "\n".join(lines))
+
+    # Admin: reset per-user rate limit anchor
+    @dp.message(lambda message: message.text and message.text.strip().lower().startswith('/reset_limit'))
+    async def cmd_reset_limit(message: types.Message):
+        if not is_admin(message.from_user.id):
+            return
+        parts = message.text.strip().split()
+        if len(parts) < 2:
+            await message.answer("Usage: /reset_limit <user_id>")
+            return
+        try:
+            target_id = int(parts[1])
+        except Exception:
+            await message.answer("Invalid user_id")
+            return
+        try:
+            from database import reset_user_rate_limit
+            ok = reset_user_rate_limit(target_id)
+        except Exception:
+            ok = False
+        if ok:
+            await message.answer(f"Rate limit window reset for user {target_id}")
+        else:
+            await message.answer("Failed to reset rate limit")
 
     @dp.message(lambda message: is_admin(message.from_user.id) and (
         state.user_data.get(message.from_user.id, {}).get('awaiting_add_mod_id') or
