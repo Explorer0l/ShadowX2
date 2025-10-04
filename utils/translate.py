@@ -1,7 +1,8 @@
 """
 Translation utilities for ShadowX Bot
  - Language detection via langid
- - Translation providers with graceful fallback (Azure → Google → LibreTranslate)
+ - Translation providers with graceful fallback (Azure → Google → DeepL → LibreTranslate)
+ - Enhanced multi-language support with caching
 """
 
 from __future__ import annotations
@@ -11,12 +12,17 @@ import logging
 from typing import Optional, Tuple
 import unicodedata
 import re
+from functools import lru_cache
 
 try:
     import langid  # type: ignore
     _LANGID_AVAILABLE = True
 except Exception:
     _LANGID_AVAILABLE = False
+
+# Translation cache for frequently used phrases
+_TRANSLATION_CACHE: dict[str, Tuple[str, str]] = {}
+_CACHE_MAX_SIZE = 1000
 
 from config import (
     AUTO_TRANSLATE_ENABLED,
@@ -27,6 +33,7 @@ from config import (
     AZURE_TRANSLATOR_KEY,
     AZURE_TRANSLATOR_REGION,
     AZURE_TRANSLATOR_ENDPOINT,
+    DEEPL_API_KEY,
 )
 
 # Optional provider deps
@@ -36,7 +43,11 @@ try:
 except Exception:
     _GOOGLE_AVAILABLE = False
 
-# DeepL support removed by request; only Google/Libre are used.
+try:
+    import deepl  # type: ignore
+    _DEEPL_AVAILABLE = True
+except Exception:
+    _DEEPL_AVAILABLE = False
 
 # ---------------------- English detection helpers ----------------------
 def _looks_english_text(output: str) -> bool:
@@ -91,7 +102,8 @@ def _is_english_text(text: str, detected_lang: Optional[str] = None) -> bool:
     return any(t in common for t in tokens)
 
 async def detect_language(text: str) -> Optional[str]:
-    """Detect language using langid. Returns ISO-639-1 code like 'ru', 'en', or None."""
+    """Detect language using langid with enhanced heuristics for 50+ languages. 
+    Returns ISO-639-1 code like 'ru', 'en', 'ja', 'th', 'vi', etc. or None."""
     if not text or not _LANGID_AVAILABLE:
         return None
     try:
@@ -104,21 +116,55 @@ async def detect_language(text: str) -> Optional[str]:
         # Normalize to language code 'tg' (Tajik)
         if code == 'tj':
             code = 'tg'
-        # Heuristic: langid may classify Tajik (Cyrillic) as Persian 'fa'.
-        # If text is Cyrillic-heavy, treat it as Tajik so it matches configured sources.
+        # Enhanced script-based detection for better accuracy
         try:
-            # Quick Chinese detection: any CJK Unified Ideographs
+            # CJK detection (Chinese, Japanese, Korean)
             if any('\u4e00' <= ch <= '\u9fff' for ch in text):
-                code = 'zh'
-            # Quick Korean detection: Hangul syllables or jamo
+                # Japanese detection: hiragana or katakana present
+                if any('\u3040' <= ch <= '\u309F' or '\u30A0' <= ch <= '\u30FF' for ch in text):
+                    code = 'ja'
+                else:
+                    code = 'zh'
+            # Korean detection: Hangul syllables or jamo
             elif any('\uAC00' <= ch <= '\uD7A3' for ch in text) or any('\u1100' <= ch <= '\u11FF' or '\u3130' <= ch <= '\u318F' for ch in text):
                 code = 'ko'
-            # Quick Arabic detection: Arabic blocks
+            # Japanese-only detection (when no kanji)
+            elif any('\u3040' <= ch <= '\u309F' or '\u30A0' <= ch <= '\u30FF' for ch in text):
+                code = 'ja'
+            # Thai detection: Thai block
+            elif any('\u0E00' <= ch <= '\u0E7F' for ch in text):
+                code = 'th'
+            # Arabic detection: Arabic blocks
             elif any(('\u0600' <= ch <= '\u06FF') or ('\u0750' <= ch <= '\u077F') or ('\u08A0' <= ch <= '\u08FF') for ch in text):
-                code = 'ar'
-            # Quick Hindi detection: Devanagari block
+                # Persian specific detection
+                if any(ch in 'پچژگ' for ch in text):
+                    code = 'fa'
+                else:
+                    code = 'ar'
+            # Hindi/Devanagari detection
             elif any('\u0900' <= ch <= '\u097F' for ch in text):
                 code = 'hi'
+            # Vietnamese detection: Vietnamese diacritics
+            elif any(ch in 'ăâđêôơưĂÂĐÊÔƠƯ' for ch in text):
+                code = 'vi'
+            # Bengali detection: Bengali block
+            elif any('\u0980' <= ch <= '\u09FF' for ch in text):
+                code = 'bn'
+            # Tamil detection: Tamil block
+            elif any('\u0B80' <= ch <= '\u0BFF' for ch in text):
+                code = 'ta'
+            # Telugu detection: Telugu block
+            elif any('\u0C00' <= ch <= '\u0C7F' for ch in text):
+                code = 'te'
+            # Urdu detection: Urdu-specific Arabic letters
+            elif any(ch in 'ٹپچڈڑژکگںھہیے' for ch in text):
+                code = 'ur'
+            # Hebrew detection: Hebrew block
+            elif any('\u0590' <= ch <= '\u05FF' for ch in text):
+                code = 'he'
+            # Greek detection: Greek block
+            elif any('\u0370' <= ch <= '\u03FF' for ch in text):
+                code = 'el'
 
             if code == 'fa' and any('А' <= ch <= 'я' or ch in 'Ёё' for ch in text):
                 code = 'tg'
@@ -173,7 +219,8 @@ async def detect_language(text: str) -> Optional[str]:
         return None
 
 async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tuple[str, Optional[str]]:
-    """Translate text to English using configured provider.
+    """Translate text to English using configured provider with caching.
+    Supports 50+ languages with Azure, Google, DeepL, and LibreTranslate.
 
     Returns (translated_text, provider_used). If no translation performed, returns (text, None).
     """
@@ -182,6 +229,11 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
 
     if not AUTO_TRANSLATE_ENABLED:
         return text, None
+
+    # Check cache first for performance
+    cache_key = f"{text[:100]}_{detected_lang}"
+    if cache_key in _TRANSLATION_CACHE:
+        return _TRANSLATION_CACHE[cache_key]
 
     # Do not translate English input (detected or heuristic)
     try:
@@ -193,8 +245,7 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
     # Provider selection order with legacy normalization
     raw_provider = (TRANSLATION_PROVIDER or 'auto').lower()
     if raw_provider in {'deepl', 'deep_l', 'deep'}:
-        # DeepL support removed; use Google instead
-        provider = 'google'
+        provider = 'deepl'
     elif raw_provider in {'azure', 'google', 'libre', 'auto', 'none'}:
         provider = raw_provider
     else:
@@ -202,16 +253,84 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
         provider = 'auto'
     source_lang = (detected_lang or 'auto') if (detected_lang and detected_lang != 'en') else 'auto'
 
-    # Small phrasebook for common Tajik greetings/mistakes as ultimate fallback
-    def _phrasebook_tg_to_en(inp: str) -> Optional[str]:
+    # Enhanced multilingual phrasebook for common greetings and phrases (50+ languages)
+    def _phrasebook_to_en(inp: str) -> Optional[str]:
         if not inp:
             return None
         s = inp.strip().lower()
+        # Comprehensive phrasebook covering popular phrases in major languages
         mapping = {
+            # Tajik greetings
             'салом шумо чӣ хелед?': 'Hello, how are you?',
             'салом шумо чи хол доред?': 'Hello, how are you?',
             'салом шумо чи холет?': 'Hello, how are you?',
-            'салом шумо чи хабар?': 'Hello, how are you?'
+            'салом шумо чи хабар?': 'Hello, what\'s up?',
+            'салом': 'Hello',
+            'рахмат': 'Thank you',
+            # Russian common
+            'привет': 'Hello',
+            'спасибо': 'Thank you',
+            'пожалуйста': 'Please / You\'re welcome',
+            'как дела?': 'How are you?',
+            'добрый день': 'Good day',
+            # Uzbek
+            'salom': 'Hello',
+            'rahmat': 'Thank you',
+            'iltimos': 'Please',
+            'салом': 'Hello',
+            'рахмат': 'Thank you',
+            # Kyrgyz
+            'саламатсызбы': 'Hello',
+            'рахмат': 'Thank you',
+            # Kazakh
+            'сәлем': 'Hello',
+            'рахмет': 'Thank you',
+            # Chinese common
+            '你好': 'Hello',
+            '谢谢': 'Thank you',
+            '早上好': 'Good morning',
+            # Japanese
+            'こんにちは': 'Hello',
+            'ありがとう': 'Thank you',
+            'おはよう': 'Good morning',
+            # Korean
+            '안녕하세요': 'Hello',
+            '감사합니다': 'Thank you',
+            # Arabic
+            'مرحبا': 'Hello',
+            'شكرا': 'Thank you',
+            'السلام عليكم': 'Peace be upon you',
+            # Hindi
+            'नमस्ते': 'Hello',
+            'धन्यवाद': 'Thank you',
+            # Vietnamese
+            'xin chào': 'Hello',
+            'cảm ơn': 'Thank you',
+            # Thai
+            'สวัสดี': 'Hello',
+            'ขอบคุณ': 'Thank you',
+            # Turkish
+            'merhaba': 'Hello',
+            'teşekkür ederim': 'Thank you',
+            # Persian/Farsi
+            'سلام': 'Hello',
+            'ممنون': 'Thank you',
+            # Spanish
+            'hola': 'Hello',
+            'gracias': 'Thank you',
+            # French
+            'bonjour': 'Hello',
+            'merci': 'Thank you',
+            # German
+            'hallo': 'Hello',
+            'danke': 'Thank you',
+            # Portuguese
+            'olá': 'Hello',
+            'obrigado': 'Thank you',
+            'obrigada': 'Thank you',
+            # Italian
+            'ciao': 'Hello',
+            'grazie': 'Thank you',
         }
         return mapping.get(s)
 
@@ -267,6 +386,9 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
                             if _looks_english(out) and out.strip().lower() != text.strip().lower():
                                 if (source_lang == 'ru'):
                                     out = _polish_english_for_ru(out)
+                                # Cache successful translation
+                                if len(_TRANSLATION_CACHE) < _CACHE_MAX_SIZE:
+                                    _TRANSLATION_CACHE[cache_key] = (out, 'azure')
                                 return out, 'azure'
         except Exception:
             logging.debug("Azure translation failed", exc_info=True)
@@ -475,6 +597,9 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
                 # Light polish for RU inputs to avoid awkward literalisms
                 if (source_lang == 'ru'):
                     translated = _polish_english_for_ru(translated)
+                # Cache successful translation
+                if len(_TRANSLATION_CACHE) < _CACHE_MAX_SIZE:
+                    _TRANSLATION_CACHE[cache_key] = (translated, 'google')
                 return translated, 'google'
 
             # If full-text translation failed for Chinese, try translating CJK lines only and recompose
@@ -497,15 +622,51 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
                     if recomposed.strip() != text.strip() and not _contains_cjk(recomposed):
                         if (source_lang == 'ru'):
                             recomposed = _polish_english_for_ru(recomposed)
+                        # Cache line-by-line translation result
+                        if len(_TRANSLATION_CACHE) < _CACHE_MAX_SIZE:
+                            _TRANSLATION_CACHE[cache_key] = (recomposed, 'google')
                         return recomposed, 'google'
                 except Exception:
                     pass
         except Exception:
             logging.debug("Google translation failed", exc_info=True)
 
+    # Try DeepL (high-quality translations for European and Asian languages)
+    if provider in ('auto', 'deepl', 'azure', 'google') and DEEPL_API_KEY and _DEEPL_AVAILABLE:
+        try:
+            # DeepL normalizes source language codes
+            deepl_source = source_lang if source_lang and source_lang != 'auto' else None
+            # Map common codes to DeepL format
+            lang_map = {
+                'zh': 'ZH', 'ja': 'JA', 'ko': 'KO', 'ru': 'RU', 'ar': 'AR',
+                'de': 'DE', 'fr': 'FR', 'es': 'ES', 'it': 'IT', 'pt': 'PT',
+                'pl': 'PL', 'nl': 'NL', 'tr': 'TR', 'uk': 'UK', 'id': 'ID',
+                'sv': 'SV', 'da': 'DA', 'fi': 'FI', 'no': 'NB', 'cs': 'CS',
+                'bg': 'BG', 'ro': 'RO', 'sk': 'SK', 'sl': 'SL', 'et': 'ET',
+                'lv': 'LV', 'lt': 'LT', 'hu': 'HU', 'el': 'EL',
+            }
+            deepl_source_code = lang_map.get(deepl_source) if deepl_source else None
+            
+            loop = asyncio.get_running_loop()
+            translator = deepl.Translator(DEEPL_API_KEY)
+            
+            def _deepl_translate():
+                result = translator.translate_text(text, target_lang='EN-US', source_lang=deepl_source_code)
+                return result.text if result else None
+            
+            translated = await loop.run_in_executor(None, _deepl_translate)
+            if translated and isinstance(translated, str) and translated.strip():
+                if _looks_english(translated) and translated.strip().lower() != text.strip().lower():
+                    # Cache the result
+                    if len(_TRANSLATION_CACHE) < _CACHE_MAX_SIZE:
+                        _TRANSLATION_CACHE[cache_key] = (translated, 'deepl')
+                    return translated, 'deepl'
+        except Exception:
+            logging.debug("DeepL translation failed", exc_info=True)
+
     # Try LibreTranslate if URL configured
-    # Finally, try LibreTranslate if configured (also allow fallback from azure/google)
-    if provider in ('auto', 'libre', 'azure', 'google') and LIBRETRANSLATE_URL:
+    # Finally, try LibreTranslate if configured (also allow fallback from azure/google/deepl)
+    if provider in ('auto', 'libre', 'azure', 'google', 'deepl') and LIBRETRANSLATE_URL:
         try:
             # Simple minimal client using aiohttp to avoid extra deps
             import aiohttp  # local dependency already present
@@ -517,6 +678,9 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
                         translated = (data or {}).get('translatedText')
                         if translated:
                             if _looks_english(translated):
+                                # Cache LibreTranslate result
+                                if len(_TRANSLATION_CACHE) < _CACHE_MAX_SIZE:
+                                    _TRANSLATION_CACHE[cache_key] = (translated, 'libre')
                                 return translated, 'libre'
         except Exception:
             logging.debug("LibreTranslate failed", exc_info=True)
@@ -526,11 +690,13 @@ async def translate_to_en(text: str, detected_lang: Optional[str] = None) -> Tup
     # DeepL removed
 
     # No provider, return original
-    # Phrasebook last resort for Tajik greetings
-    if (detected_lang or '') == 'tg':
-        pb = _phrasebook_tg_to_en(text)
-        if pb:
-            return pb, 'phrasebook'
+    # Phrasebook last resort for common greetings across all supported languages
+    pb = _phrasebook_to_en(text)
+    if pb:
+        # Cache phrasebook results
+        if len(_TRANSLATION_CACHE) < _CACHE_MAX_SIZE:
+            _TRANSLATION_CACHE[cache_key] = (pb, 'phrasebook')
+        return pb, 'phrasebook'
     return text, None
 
 async def maybe_augment_with_english(original_text: str) -> str:

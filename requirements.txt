@@ -4,6 +4,10 @@ python-dotenv==1.0.1
 langid==1.1.6
 deep-translator==1.11.4
 
+# Optional: DeepL for high-quality translations (requires API key)
+# Install only if you have a DeepL API key: pip install deepl
+deepl==1.18.0
+
 # AI moderation (нейронка) - optimized for Python 3.12
 transformers==4.37.0
 huggingface-hub==0.24.6
@@ -15,3 +19,4 @@ torchaudio==2.5.1
 
 # Note: Optimized for Python 3.12 LTS - stable AI performance
 # PyTorch 2.5.1 provides latest compatibility with Python 3.12
+# Translation supports 50+ languages with Azure, Google, DeepL (optional), LibreTranslate

@@ -18,7 +18,7 @@ from database import (
 )
 from config import MESSAGE_QUEUE_MIN_INTERVAL, MESSAGE_QUEUE_MAX_INTERVAL, UNIVERSITIES, USER_MAX_PER_HOUR, USER_RATE_WINDOW_SECONDS
 from utils.translate import maybe_augment_with_english
-from aiogram.exceptions import TelegramRetryAfter, TelegramServerError, TelegramNetworkError, TelegramBadRequest
+from aiogram.exceptions import TelegramRetryAfter, TelegramServerError, TelegramNetworkError, TelegramBadRequest, TelegramForbiddenError
 
 class MessageQueue:
     def __init__(self, bot):
@@ -265,10 +265,17 @@ class MessageQueue:
                                         video_note=file_id
                                     )
                                     # Send a separate message with caption/number and hashtags if needed
-                                    if final_caption:
+                                    # Build caption text similar to other media
+                                    if send_content:
+                                        extra_text = f"{send_content}\n№{message_number}"
+                                    else:
+                                        extra_text = f"№{message_number}"
+                                    if hashtag:
+                                        extra_text = f"{hashtag}\n{extra_text}\n{hashtag}"
+                                    if extra_text:
                                         await self.bot.send_message(
                                             chat_id=channel,
-                                            text=final_caption
+                                            text=extra_text
                                         )
                                 except TelegramRetryAfter as e:
                                     await asyncio.sleep(int(getattr(e, 'retry_after', 5)) + 1)
@@ -357,6 +364,29 @@ class MessageQueue:
                         except Exception:
                             logging.warning(f"Failed to notify user {user_id}", exc_info=True)
                         
+                    except TelegramForbiddenError as e:
+                        # Non-retryable: bot not a member or posting not allowed
+                        logging.error(
+                            f"Forbidden while posting to {university} ({channel}). "
+                            f"Ensure bot is added as an admin to the channel. Message {message_id} will be marked failed."
+                        )
+                        try:
+                            from database import mark_message_as_failed
+                            mark_message_as_failed(queue_id)
+                        except Exception:
+                            logging.debug("Failed to mark message as failed", exc_info=True)
+                        # Optionally notify user that posting failed
+                        try:
+                            await self.bot.send_message(
+                                chat_id=user_id,
+                                text=(
+                                    "Your message couldn't be posted because the bot is not a member of the channel. "
+                                    "Please try again later."
+                                )
+                            )
+                        except Exception:
+                            pass
+                        continue
                     except Exception:
                         logging.exception(f"Error processing queued message {message_id}")
                 

@@ -42,7 +42,7 @@ async def on_startup():
     try:
         commands = [
             BotCommand(command="start", description="Start"),
-            BotCommand(command="send_anon_message", description="Send anonymous reply to a post"),
+            BotCommand(command="anon", description="Send anonymous reply to a post"),
             BotCommand(command="help", description="Help"),
         ]
         # Apply commands across common scopes so clients see updates

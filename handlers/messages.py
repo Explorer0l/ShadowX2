@@ -72,11 +72,11 @@ async def register_message_handlers(dp, bot):
             reply_markup=get_user_keyboard(user_id, language, is_admin=is_admin(user_id), is_moderator=is_mod)
         )
 
-    @dp.message(Command("send_anon_message"))
+    @dp.message(Command("anon"))
     async def cmd_send_anon_message(message: types.Message):
         """Allow any user to send an anonymous reply to the author of a published post by its number.
         Usage:
-            /send_anon_message <number> <text>
+            /anon <number> <text>
         If text is omitted, bot will prompt for it in next message.
         """
         user_id = message.from_user.id
@@ -85,13 +85,13 @@ async def register_message_handlers(dp, bot):
 
         text = message.text or ''
         # Parse: command + number + optional text
-        m = re.match(r"^/send_anon_message\s+(\d+)(?:\s+(.+))?$", text.strip(), flags=re.IGNORECASE | re.DOTALL)
+        m = re.match(r"^/anon\s+(\d+)(?:\s+(.+))?$", text.strip(), flags=re.IGNORECASE | re.DOTALL)
         if not m:
             await message.answer(
                 "How to use:\n"
                 "1) Find the post number in the channel (e.g., №42).\n"
-                "2) Send: /send_anon_message 42 Your message here\n\n"
-                "Example:\n/send_anon_message 42 Hello! Let's connect."
+                "2) Send: /anon 42 Your message here\n\n"
+                "Example:\n/anon 42 Hello! Let's connect."
             )
             return
         post_number = int(m.group(1))
@@ -206,10 +206,23 @@ async def register_message_handlers(dp, bot):
             except Exception:
                 logging.debug("Failed to check moderator status on back", exc_info=True)
                 is_mod = False
-            await message.answer(
-                get_text("main_menu", language),
-                reply_markup=get_user_keyboard(user_id, language, is_admin=is_admin(user_id), is_moderator=is_mod)
-            )
+            try:
+                await message.answer(
+                    get_text("main_menu", language),
+                    reply_markup=get_user_keyboard(user_id, language, is_admin=is_admin(user_id), is_moderator=is_mod)
+                )
+            except Exception:
+                # Network hiccup; try once more shortly
+                try:
+                    import asyncio as _asyncio
+                    await _asyncio.sleep(1)
+                    await message.answer(
+                        get_text("main_menu", language),
+                        reply_markup=get_user_keyboard(user_id, language, is_admin=is_admin(user_id), is_moderator=is_mod)
+                    )
+                except Exception:
+                    # Give up silently to avoid user-visible tracebacks
+                    pass
         else:
             await start_command(message)
     
@@ -268,7 +281,7 @@ async def register_message_handlers(dp, bot):
                 # Reset state gracefully
                 user_data[user_id]['awaiting_anon_reply'] = False
                 user_data[user_id].pop('anon_reply_target', None)
-                await message.answer("Session expired. Use /send_anon_message <number> again.")
+                await message.answer("Session expired. Use /anon <number> again.")
                 return
             reply_text = message.text.strip()
             try:

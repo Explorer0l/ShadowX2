@@ -91,7 +91,7 @@ def is_admin(user_id: int) -> bool:
 
 # Universities and their channels
 UNIVERSITIES = {
-    "XIAMEN": "@xmumShadowX"
+    "XIAMEN": "@shadow_xiamen_talk"
 }
 
 # Message types and their hashtags (English-only)
@@ -135,15 +135,24 @@ AUTO_TRANSLATE_ENABLED = os.getenv("AUTO_TRANSLATE_ENABLED", "1") in ("1", "true
 # Translate all non-English messages regardless of source list
 AUTO_TRANSLATE_ALL = os.getenv("AUTO_TRANSLATE_ALL", "0") in ("1", "true", "True", "yes", "on")
 # Comma-separated ISO-639-1 language codes to force-translate to English
-# ru, tg (Tajik), kk (Kazakh), zh (Chinese), uz (Uzbek), ky (Kyrgyz),
-# ar (Arabic), hi (Hindi)
+# Supports 50+ languages: Central Asian (ru, tg, kk, uz, ky), East Asian (zh, ja, ko),
+# South Asian (hi, bn, ta, te, ur), Middle Eastern (ar, fa, he, tr),
+# European (de, fr, es, it, pt, pl, nl, sv, da, fi, no, cs, el), Southeast Asian (vi, th), etc.
 AUTO_TRANSLATE_SOURCE_LANGS = [x.strip().lower() for x in os.getenv(
     "AUTO_TRANSLATE_SOURCE_LANGS",
-    # Include likely misclassifications for Tajik texts (sr, mk, fa)
-    # and add Arabic/Hindi by default
-    "ru,tg,kk,zh,uz,ky,ar,hi,sr,mk,fa"
+    # Comprehensive list of commonly used languages in the region
+    # Central Asian & Russian sphere
+    "ru,tg,kk,zh,uz,ky,sr,mk,fa,uk,be,az,"
+    # East & Southeast Asian
+    "ja,ko,vi,th,id,ms,tl,"
+    # South Asian
+    "hi,bn,ta,te,ur,ne,si,"
+    # Middle Eastern
+    "ar,he,tr,fa,"
+    # European
+    "de,fr,es,it,pt,pl,nl,sv,da,fi,no,cs,el,ro,bg,hr,sk,sl,et,lv,lt,hu"
 ).split(',') if x.strip()]
-TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "azure")  # auto|azure|google|libre|deepl|none
+TRANSLATION_PROVIDER = os.getenv("TRANSLATION_PROVIDER", "azure")  # auto|azure|google|deepl|libre|none
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "")
 # Optional: DeepL API key to use high-quality translations when available
 DEEPL_API_KEY = os.getenv("DEEPL_API_KEY", "")

@@ -615,6 +615,16 @@ def mark_message_as_sent(queue_id):
     except sqlite3.Error as e:
         logging.error(f"Error marking message as sent: {e}")
 
+def mark_message_as_failed(queue_id):
+    """Mark a queued message as failed (non-retryable)"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('UPDATE message_queue SET status = "failed" WHERE queue_id = ?', (queue_id,))
+            conn.commit()
+    except sqlite3.Error as e:
+        logging.error(f"Error marking message as failed: {e}")
+
 def save_published_mapping(university: str, number: int, message_id: int, user_id: int) -> bool:
     """Persist mapping from (university, number) to original message/user."""
     try:
